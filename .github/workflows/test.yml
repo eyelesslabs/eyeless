@@ -1,0 +1,42 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+
+      - name: Install dependencies
+        working-directory: core
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: core
+        run: npx playwright install --with-deps chromium
+
+      - name: Run tests
+        working-directory: core
+        run: npm test
+
+  # Swift tests require macOS 26 (Tahoe) which is not yet available
+  # on GitHub-hosted runners. Uncomment when macOS 26 runners ship.
+  #
+  # swift-tests:
+  #   runs-on: macos-15
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Run tests
+  #       working-directory: app/Eyeless
+  #       run: swift test

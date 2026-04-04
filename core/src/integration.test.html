@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Eyeless Integration Test</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; background: #fff; }
+    #app { padding: 20px; }
+    h1 { color: #333; font-size: 24px; }
+    .panel { display: none; padding: 16px; background: #f0f0f0; border: 1px solid #ccc; margin-top: 12px; }
+    .panel.open { display: block; }
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100; }
+    .modal-overlay.visible { display: flex; align-items: center; justify-content: center; }
+    .modal { background: #fff; padding: 24px; border-radius: 8px; min-width: 300px; }
+    .modal h2 { color: #111; margin: 0 0 12px; }
+    #status { color: green; font-weight: bold; }
+    button { padding: 8px 16px; cursor: pointer; margin-right: 8px; }
+    .tab-content { display: none; padding: 12px; border: 1px solid #ddd; }
+    .tab-content.active { display: block; }
+    .animated { transition: opacity 0.3s; opacity: 1; }
+    .animated.fade-out { opacity: 0; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <h1>Integration Test App</h1>
+    <p id="status">Ready</p>
+
+    <button id="open-panel" onclick="togglePanel()">Toggle Panel</button>
+    <button id="open-modal" onclick="openModal()">Open Modal</button>
+    <button id="tab-a-btn" onclick="switchTab('a')">Tab A</button>
+    <button id="tab-b-btn" onclick="switchTab('b')">Tab B</button>
+
+    <div id="panel" class="panel">
+      <p>Panel content is visible.</p>
+    </div>
+
+    <div id="tab-a" class="tab-content active">
+      <p>Tab A content.</p>
+    </div>
+    <div id="tab-b" class="tab-content">
+      <p>Tab B content.</p>
+    </div>
+  </div>
+
+  <div id="modal-overlay" class="modal-overlay">
+    <div class="modal">
+      <h2>Settings</h2>
+      <p>Modal body content.</p>
+      <button id="close-modal" onclick="closeModal()">Close</button>
+    </div>
+  </div>
+
+  <script>
+    function togglePanel() {
+      document.getElementById('panel').classList.toggle('open');
+    }
+    function openModal() {
+      document.getElementById('modal-overlay').classList.add('visible');
+    }
+    function closeModal() {
+      document.getElementById('modal-overlay').classList.remove('visible');
+    }
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.getElementById('tab-' + tab).classList.add('active');
+    }
+  </script>
+</body>
+</html>

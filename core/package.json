@@ -1,0 +1,30 @@
+{
+  "name": "eyeless-core",
+  "version": "0.2.3",
+  "description": "Structured visual feedback for AI coding agents",
+  "main": "dist/index.js",
+  "bin": {
+    "eyeless": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js",
+    "serve": "node dist/cli.js serve",
+    "test": "tsc -p tsconfig.test.json && node --test 'dist/**/*.test.js'"
+  },
+  "private": true,
+  "license": "BUSL-1.1",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "backstopjs": "^6.3.25",
+    "playwright": "^1.59.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "^6.0.2"
+  }
+}

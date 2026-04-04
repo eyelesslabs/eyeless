@@ -1,0 +1,5 @@
+# Note: the `files` field in package.json is the primary whitelist.
+# prepack cleans core/dist/ and rebuilds with production tsconfig
+# (which excludes test files). This file is a secondary safeguard.
+core/src/
+core/dist/**/*.test.*

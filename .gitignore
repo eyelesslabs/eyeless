@@ -1,0 +1,20 @@
+node_modules/
+dist/
+core/dist/
+core/node_modules/
+.eyeless/baselines/
+*.tsbuildinfo
+
+# BackstopJS artifacts
+backstop_data/
+core/backstop_data/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Pencil
+*.pen

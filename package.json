@@ -1,0 +1,52 @@
+{
+  "name": "eyeless",
+  "version": "0.2.3",
+  "description": "Visual feedback for AI coding agents — structured text, zero pixels",
+  "main": "core/dist/index.js",
+  "types": "core/dist/index.d.ts",
+  "bin": {
+    "eyeless": "bin/eyeless"
+  },
+  "files": [
+    "bin/",
+    "core/dist/",
+    "core/package.json",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "cd core && npm run build",
+    "test": "cd core && npm test",
+    "prepack": "cd core && rm -rf dist && npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "backstopjs": "^6.3.25",
+    "playwright": "^1.59.1"
+  },
+  "keywords": [
+    "visual-testing",
+    "mcp",
+    "mcp-server",
+    "ai-agents",
+    "css-diffing",
+    "backstopjs",
+    "playwright",
+    "visual-regression",
+    "style-attribution",
+    "dom-diffing"
+  ],
+  "author": "Andre Sayej",
+  "license": "BUSL-1.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eyelesslabs/eyeless.git"
+  },
+  "homepage": "https://eyeless.dev",
+  "bugs": {
+    "url": "https://github.com/eyelesslabs/eyeless/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

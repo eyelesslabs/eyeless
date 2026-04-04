@@ -1,0 +1,9 @@
+#!/usr/bin/env node
+
+// Eyeless MCP Server CLI
+// Usage: eyeless serve    — starts the MCP server (stdio transport)
+//        eyeless capture  — capture a baseline
+//        eyeless check    — check against baseline
+
+const path = require('path');
+require(path.join(__dirname, '..', 'core', 'dist', 'cli.js'));
