@@ -6,7 +6,7 @@ Structured visual feedback for AI coding agents. Node.js core (BackstopJS + Play
 
 ```bash
 npm install && npm run build   # Build
-cd core && npm test            # Run tests (64 tests)
+cd core && npm test            # Run tests (78 tests)
 cd core && npm run dev         # Watch mode
 
 # CLI
@@ -106,7 +106,7 @@ All bound to `127.0.0.1` only. All project paths validated (absolute, existing d
 
 ## Testing
 
-**Node.js (64 tests):** `node:test` + `node:assert` — zero added dependencies.
+**Node.js (78 tests):** `node:test` + `node:assert` — zero added dependencies.
 - `compare.test.ts` — snapshot comparison algorithm
 - `config/index.test.ts` — config loading, saving, path utilities
 - `engine.test.ts` — screenshot file finder
