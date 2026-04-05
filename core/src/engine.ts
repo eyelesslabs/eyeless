@@ -52,8 +52,29 @@ export async function capture(opts: CaptureOptions): Promise<CaptureResult[]> {
   ensureDirectories(projectPath);
 
   const scenarios = resolveScenarios(opts, config);
+  const isSingleLabel = scenarios.length === 1 && (config.scenarios.length > 1 || scenarios[0].label !== 'default');
+  const bitmapsDir = path.join(getBaselinesDir(projectPath), 'bitmaps_reference');
+
+  // BackstopJS wipes bitmaps_reference on every reference run.
+  // When capturing a single label, back up other scenarios' bitmaps
+  // so they survive the wipe.
+  let backedUpFiles: { name: string; data: Buffer }[] = [];
+  if (isSingleLabel && fs.existsSync(bitmapsDir)) {
+    const label = scenarios[0].label;
+    const existing = fs.readdirSync(bitmapsDir).filter(f => f.endsWith('.png'));
+    for (const file of existing) {
+      if (!file.includes(`_${label}_`)) {
+        backedUpFiles.push({ name: file, data: fs.readFileSync(path.join(bitmapsDir, file)) });
+      }
+    }
+  }
 
   await runReference(config, projectPath, scenarios);
+
+  // Restore backed-up bitmaps
+  for (const { name, data } of backedUpFiles) {
+    fs.writeFileSync(path.join(bitmapsDir, name), data);
+  }
 
   const snapshotsDir = getSnapshotsDir(projectPath);
   const results: CaptureResult[] = [];

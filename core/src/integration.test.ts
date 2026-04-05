@@ -249,4 +249,21 @@ describe('integration: multi-scenario without label', { timeout: 120_000 }, () =
     assert.equal(results[0].scenario, 'homepage');
     assert.equal(results[0].status, 'captured');
   });
+
+  it('single-label capture preserves other scenarios bitmaps', async () => {
+    // Capture all scenarios first
+    await capture({ project: tmpProject });
+
+    const bitmapsDir = path.join(getBaselinesDir(tmpProject), 'bitmaps_reference');
+    const pngsBefore = fs.readdirSync(bitmapsDir).filter(f => f.endsWith('.png'));
+    assert.ok(pngsBefore.some(f => f.includes('_homepage_')), 'homepage bitmap should exist before');
+    assert.ok(pngsBefore.some(f => f.includes('_panel-open_')), 'panel-open bitmap should exist before');
+
+    // Now re-capture only homepage — panel-open bitmap must survive
+    await capture({ project: tmpProject, label: 'homepage' });
+
+    const pngsAfter = fs.readdirSync(bitmapsDir).filter(f => f.endsWith('.png'));
+    assert.ok(pngsAfter.some(f => f.includes('_homepage_')), 'homepage bitmap should exist after');
+    assert.ok(pngsAfter.some(f => f.includes('_panel-open_')), 'panel-open bitmap should survive single-label capture');
+  });
 });
