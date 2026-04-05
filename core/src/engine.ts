@@ -30,13 +30,18 @@ function screenshotRelativePath(eyelessDir: string, absolutePath: string): strin
   return path.relative(eyelessDir, absolutePath);
 }
 
-function resolveScenarios(opts: EngineOptions, config: EyelessConfig): ScenarioConfig[] {
+export function resolveScenarios(opts: EngineOptions, config: EyelessConfig): ScenarioConfig[] {
   if (opts.label) {
-    const url = opts.url || config.url;
-    const scenario: ScenarioConfig = { label: opts.label, url };
-    if (opts.interactions) scenario.interactions = opts.interactions;
-    if (opts.waitFor) scenario.waitFor = opts.waitFor;
-    return [scenario];
+    const configScenario = config.scenarios.find(s => s.label === opts.label);
+    const base: ScenarioConfig = configScenario
+      ? { ...configScenario }
+      : { label: opts.label, url: opts.url || config.url };
+
+    if (opts.url) base.url = opts.url;
+    if (opts.interactions) base.interactions = opts.interactions;
+    if (opts.waitFor) base.waitFor = opts.waitFor;
+
+    return [base];
   }
 
   if (config.scenarios.length > 0) {
