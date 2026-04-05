@@ -26,7 +26,7 @@ function sanitizeError(err: unknown): string {
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'eyeless',
-    version: '0.3.2',
+    version: '0.3.3',
   });
 
   server.tool(
