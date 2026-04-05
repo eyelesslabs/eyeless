@@ -1,11 +1,9 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { capture, check } from '../engine';
-import { formatCheckResult, formatCaptureResult, formatBaselinesList, formatSnapshotInspection, BaselineEntry } from '../output';
-import { getSnapshotsDir, loadConfig } from '../config';
+import { formatCheckResult, formatCaptureResult, formatBaselinesList, formatSnapshotInspection } from '../output';
+import { getSnapshotsDir, listBaselines, loadConfig } from '../config';
 import { loadSnapshot, getSnapshotPath } from '../attributor/compare';
 import { resolveProjectPath } from '../validation';
 
@@ -28,7 +26,7 @@ function sanitizeError(err: unknown): string {
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'eyeless',
-    version: '0.2.3',
+    version: '0.3.0',
   });
 
   server.tool(
@@ -136,31 +134,7 @@ See eyeless_capture for full documentation on interactions and waitFor options.`
     async ({ project }) => {
       try {
         const projectPath = resolveProjectPath(project);
-        const snapshotsDir = getSnapshotsDir(projectPath);
-        const refDir = path.join(snapshotsDir, 'reference');
-        const baselines: BaselineEntry[] = [];
-
-        if (fs.existsSync(refDir)) {
-          const files = fs.readdirSync(refDir).filter(f => f.endsWith('.json'));
-          for (const file of files) {
-            try {
-              const snapshot = JSON.parse(fs.readFileSync(path.join(refDir, file), 'utf-8'));
-              const parts = file.replace('.json', '').split('_');
-              const viewport = parts.pop() || 'desktop';
-              const scenario = parts.join('_');
-
-              baselines.push({
-                scenario,
-                viewport,
-                elementCount: Array.isArray(snapshot.elements) ? snapshot.elements.length : 0,
-                timestamp: typeof snapshot.timestamp === 'string' ? snapshot.timestamp : '',
-              });
-            } catch {
-              // Skip malformed snapshot files
-            }
-          }
-        }
-
+        const baselines = listBaselines(projectPath);
         const text = formatBaselinesList(baselines);
         return { content: [{ type: 'text', text }] };
       } catch (err: any) {

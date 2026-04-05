@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { StyleSnapshot, ElementStyleSnapshot, StyleDrift, IgnoreRule } from '../types';
+import { sanitizeLabel } from './styles';
 
 /**
  * Resolve confidence from two snapshots — use the minimum (most conservative).
@@ -112,7 +113,7 @@ export function getSnapshotPath(
   scenarioLabel: string,
   viewportLabel: string,
 ): string {
-  const scenarioSafe = scenarioLabel.replace(/[^a-zA-Z0-9-_]/g, '_');
-  const viewportSafe = viewportLabel.replace(/[^a-zA-Z0-9-_]/g, '_');
+  const scenarioSafe = sanitizeLabel(scenarioLabel);
+  const viewportSafe = sanitizeLabel(viewportLabel);
   return path.join(snapshotsDir, type, `${scenarioSafe}_${viewportSafe}.json`);
 }

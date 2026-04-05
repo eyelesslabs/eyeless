@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { compareSnapshots, getSnapshotPath, loadSnapshot } from './compare';
+import { sanitizeLabel } from './styles';
 import { StyleSnapshot, ElementStyleSnapshot } from '../types';
 
 function makeElement(
@@ -116,6 +117,27 @@ describe('getSnapshotPath', () => {
   it('sanitizes special characters in labels', () => {
     const result = getSnapshotPath('/tmp/snapshots', 'test', 'my page!', 'tablet 768');
     assert.equal(result, path.join('/tmp/snapshots', 'test', 'my_page__tablet_768.json'));
+  });
+});
+
+describe('sanitizeLabel', () => {
+  it('passes through clean labels unchanged', () => {
+    assert.equal(sanitizeLabel('homepage'), 'homepage');
+    assert.equal(sanitizeLabel('my-page_v2'), 'my-page_v2');
+  });
+
+  it('replaces spaces and special characters with underscores', () => {
+    assert.equal(sanitizeLabel('my page!'), 'my_page_');
+    assert.equal(sanitizeLabel('tablet 768'), 'tablet_768');
+  });
+
+  it('replaces dots, slashes, and path-like characters', () => {
+    assert.equal(sanitizeLabel('../evil/path'), '___evil_path');
+    assert.equal(sanitizeLabel('file.json'), 'file_json');
+  });
+
+  it('handles empty string', () => {
+    assert.equal(sanitizeLabel(''), '');
   });
 });
 

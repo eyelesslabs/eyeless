@@ -7,7 +7,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { TRACKED_PROPERTIES, SVG_ATTRIBUTES } from './styles';
+import { TRACKED_PROPERTIES, SVG_ATTRIBUTES, sanitizeLabel } from './styles';
 import { ElementStyleSnapshot, StyleSnapshot } from '../types';
 
 /**
@@ -328,8 +328,8 @@ module.exports = async function onReadyScript(
   // Store snapshot in a known location for the check/capture flow to pick up
   const snapshotDir = process.env.EYELESS_SNAPSHOT_DIR;
   if (snapshotDir) {
-    const scenarioLabel = (scenario.label || 'default').replace(/[^a-zA-Z0-9-_]/g, '_');
-    const viewportLabel = (viewport.label || 'default').replace(/[^a-zA-Z0-9-_]/g, '_');
+    const scenarioLabel = sanitizeLabel(scenario.label || 'default');
+    const viewportLabel = sanitizeLabel(viewport.label || 'default');
     const filename = `${scenarioLabel}_${viewportLabel}.json`;
     const filepath = path.join(snapshotDir, isReference ? 'reference' : 'test', filename);
 

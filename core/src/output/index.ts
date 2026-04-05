@@ -84,6 +84,7 @@ export interface BaselineEntry {
   viewport: string;
   elementCount: number;
   timestamp: string;
+  url: string;
 }
 
 export function formatBaselinesList(baselines: BaselineEntry[]): string {

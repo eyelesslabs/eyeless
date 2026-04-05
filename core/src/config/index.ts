@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { EyelessConfig, Viewport } from '../types';
+import { BaselineEntry } from '../output';
 
 const DEFAULT_VIEWPORTS: Viewport[] = [
   { label: 'desktop', width: 1920, height: 1080 },
@@ -77,4 +78,34 @@ export function ensureDirectories(projectPath?: string): void {
       fs.mkdirSync(dir, { recursive: true });
     }
   }
+}
+
+export function listBaselines(projectPath: string): BaselineEntry[] {
+  const snapshotsDir = getSnapshotsDir(projectPath);
+  const refDir = path.join(snapshotsDir, 'reference');
+  const baselines: BaselineEntry[] = [];
+
+  if (!fs.existsSync(refDir)) return baselines;
+
+  const files = fs.readdirSync(refDir).filter(f => f.endsWith('.json'));
+  for (const file of files) {
+    try {
+      const snapshot = JSON.parse(fs.readFileSync(path.join(refDir, file), 'utf-8'));
+      const parts = file.replace('.json', '').split('_');
+      const viewport = parts.pop() || 'desktop';
+      const scenario = parts.join('_');
+
+      baselines.push({
+        scenario,
+        viewport,
+        elementCount: Array.isArray(snapshot.elements) ? snapshot.elements.length : 0,
+        timestamp: typeof snapshot.timestamp === 'string' ? snapshot.timestamp : '',
+        url: typeof snapshot.url === 'string' ? snapshot.url : '',
+      });
+    } catch {
+      // Skip malformed snapshot files
+    }
+  }
+
+  return baselines;
 }

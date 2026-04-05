@@ -45,3 +45,11 @@ export const SVG_ATTRIBUTES = [
 ] as const;
 
 export type TrackedProperty = typeof TRACKED_PROPERTIES[number];
+
+/**
+ * Sanitize a label (scenario or viewport) for use in filenames.
+ * Replaces any character that isn't alphanumeric, hyphen, or underscore.
+ */
+export function sanitizeLabel(label: string): string {
+  return label.replace(/[^a-zA-Z0-9-_]/g, '_');
+}

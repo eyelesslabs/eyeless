@@ -1,8 +1,8 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
-import { loadConfig, saveConfig, ensureDirectories, getBaselinesDir, getSnapshotsDir, getEyelessDir, getHistoryPath } from './config';
-import { capture, check } from './engine';
+import { loadConfig, saveConfig, ensureDirectories, listBaselines, getEyelessDir, getHistoryPath } from './config';
+import { capture, check, EngineOptions } from './engine';
 import { EyelessConfig, CheckResult } from './types';
 import { validateProjectPath } from './validation';
 
@@ -175,6 +175,44 @@ function readBody(req: http.IncomingMessage, maxBytes: number = MAX_BODY_BYTES):
   });
 }
 
+/**
+ * Parse and validate the shared fields for POST /capture and POST /check.
+ * Returns validated EngineOptions on success, or sends an error response and returns null.
+ */
+async function parseEngineRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<EngineOptions | null> {
+  const body = await readBody(req);
+  let parsed: { project?: string; url?: string; label?: string; interactions?: any[]; waitFor?: any[] };
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    respondError(res, 400, 'Invalid JSON');
+    return null;
+  }
+
+  const projectPath = validateProjectPath(parsed.project || process.cwd());
+  if (!projectPath) {
+    respondError(res, 400, 'Invalid or nonexistent project path');
+    return null;
+  }
+
+  const actionsError = validateRuntimeActions(parsed.interactions, parsed.waitFor);
+  if (actionsError) {
+    respondError(res, 400, actionsError);
+    return null;
+  }
+
+  return {
+    project: projectPath,
+    url: parsed.url,
+    label: parsed.label,
+    interactions: parsed.interactions,
+    waitFor: parsed.waitFor,
+  };
+}
+
 function respond(res: http.ServerResponse, data: unknown, status: number = 200) {
   res.writeHead(status);
   res.end(JSON.stringify(data));
@@ -267,85 +305,26 @@ export function startHttpServer(port: number = 0): Promise<HttpServerHandle> {
           const projectPath = validateProjectPath(url.searchParams.get('project') || process.cwd());
           if (!projectPath) { respondError(res, 400, 'Invalid or nonexistent project path'); return; }
 
-          const snapshotsDir = getSnapshotsDir(projectPath);
-          const baselines: { scenario: string; viewport: string; elementCount: number; timestamp: string; url: string }[] = [];
-          const refDir = path.join(snapshotsDir, 'reference');
-
-          if (fs.existsSync(refDir)) {
-            const files = fs.readdirSync(refDir).filter(f => f.endsWith('.json'));
-            for (const file of files) {
-              try {
-                const snapshot = JSON.parse(fs.readFileSync(path.join(refDir, file), 'utf-8'));
-                const parts = file.replace('.json', '').split('_');
-                const viewport = parts.pop() || 'desktop';
-                const scenario = parts.join('_');
-
-                baselines.push({
-                  scenario,
-                  viewport,
-                  elementCount: Array.isArray(snapshot.elements) ? snapshot.elements.length : 0,
-                  timestamp: typeof snapshot.timestamp === 'string' ? snapshot.timestamp : '',
-                  url: typeof snapshot.url === 'string' ? snapshot.url : '',
-                });
-              } catch {
-                // Skip malformed snapshot files
-              }
-            }
-          }
-
+          const baselines = listBaselines(projectPath);
           respond(res, { baselines });
         }
 
         // --- POST /capture ---
         else if (req.method === 'POST' && pathname === '/capture') {
-          const body = await readBody(req);
-          let parsed: { project?: string; url?: string; label?: string; interactions?: any[]; waitFor?: any[] };
-          try {
-            parsed = JSON.parse(body);
-          } catch {
-            respondError(res, 400, 'Invalid JSON'); return;
-          }
+          const opts = await parseEngineRequest(req, res);
+          if (!opts) return;
 
-          const projectPath = validateProjectPath(parsed.project || process.cwd());
-          if (!projectPath) { respondError(res, 400, 'Invalid or nonexistent project path'); return; }
-
-          const actionsError = validateRuntimeActions(parsed.interactions, parsed.waitFor);
-          if (actionsError) { respondError(res, 400, actionsError); return; }
-
-          const results = await capture({
-            project: projectPath,
-            url: parsed.url,
-            label: parsed.label,
-            interactions: parsed.interactions,
-            waitFor: parsed.waitFor,
-          });
+          const results = await capture(opts);
           respond(res, { results });
         }
 
         // --- POST /check ---
         else if (req.method === 'POST' && pathname === '/check') {
-          const body = await readBody(req);
-          let parsed: { project?: string; url?: string; label?: string; interactions?: any[]; waitFor?: any[] };
-          try {
-            parsed = JSON.parse(body);
-          } catch {
-            respondError(res, 400, 'Invalid JSON'); return;
-          }
+          const opts = await parseEngineRequest(req, res);
+          if (!opts) return;
 
-          const projectPath = validateProjectPath(parsed.project || process.cwd());
-          if (!projectPath) { respondError(res, 400, 'Invalid or nonexistent project path'); return; }
-
-          const actionsError = validateRuntimeActions(parsed.interactions, parsed.waitFor);
-          if (actionsError) { respondError(res, 400, actionsError); return; }
-
-          const results = await check({
-            project: projectPath,
-            url: parsed.url,
-            label: parsed.label,
-            interactions: parsed.interactions,
-            waitFor: parsed.waitFor,
-          });
-          appendHistory(projectPath, results);
+          const results = await check(opts);
+          appendHistory(opts.project!, results);
           respond(res, { results });
         }
 
