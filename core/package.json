@@ -1,6 +1,6 @@
 {
   "name": "eyeless-core",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Structured visual feedback for AI coding agents",
   "main": "dist/index.js",
   "bin": {
