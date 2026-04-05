@@ -74,11 +74,19 @@ export async function capture(opts: CaptureOptions): Promise<CaptureResult[]> {
     }
   }
 
-  await runReference(config, projectPath, scenarios);
-
-  // Restore backed-up bitmaps
-  for (const { name, data } of backedUpFiles) {
-    fs.writeFileSync(path.join(bitmapsDir, name), data);
+  try {
+    await runReference(config, projectPath, scenarios);
+  } finally {
+    // Restore backed-up bitmaps even if runReference throws,
+    // since BackstopJS wipes bitmaps_reference before running scenarios.
+    if (backedUpFiles.length > 0) {
+      if (!fs.existsSync(bitmapsDir)) {
+        fs.mkdirSync(bitmapsDir, { recursive: true });
+      }
+      for (const { name, data } of backedUpFiles) {
+        fs.writeFileSync(path.join(bitmapsDir, name), data);
+      }
+    }
   }
 
   const snapshotsDir = getSnapshotsDir(projectPath);

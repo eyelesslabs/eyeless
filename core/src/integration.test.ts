@@ -266,4 +266,33 @@ describe('integration: multi-scenario without label', { timeout: 120_000 }, () =
     assert.ok(pngsAfter.some(f => f.includes('_homepage_')), 'homepage bitmap should exist after');
     assert.ok(pngsAfter.some(f => f.includes('_panel-open_')), 'panel-open bitmap should survive single-label capture');
   });
+
+  it('failed single-label capture still restores other scenarios bitmaps', async () => {
+    // Capture homepage successfully first
+    await capture({ project: tmpProject });
+
+    const bitmapsDir = path.join(getBaselinesDir(tmpProject), 'bitmaps_reference');
+    assert.ok(
+      fs.readdirSync(bitmapsDir).filter(f => f.endsWith('.png')).some(f => f.includes('_homepage_')),
+      'homepage bitmap should exist before failed capture',
+    );
+
+    // Attempt to capture a scenario that will crash via evaluate that throws.
+    // BackstopJS will wipe bitmaps_reference then fail during the scenario.
+    await assert.rejects(
+      () => capture({
+        project: tmpProject,
+        label: 'crashing-scenario',
+        interactions: [{ type: 'evaluate', selector: '', expression: 'throw new Error("intentional crash")' }],
+      }),
+    );
+
+    // homepage bitmaps must survive the failed capture
+    assert.ok(fs.existsSync(bitmapsDir), 'bitmaps_reference should still exist');
+    const pngsAfter = fs.readdirSync(bitmapsDir).filter(f => f.endsWith('.png'));
+    assert.ok(
+      pngsAfter.some(f => f.includes('_homepage_')),
+      'homepage bitmap should survive a failed single-label capture',
+    );
+  });
 });
