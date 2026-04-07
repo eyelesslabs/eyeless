@@ -457,16 +457,57 @@ export function startHttpServer(port: number = 0, storage?: Storage): Promise<Ht
           return;
         }
 
+        // --- POST /import ---
+        else if (req.method === 'POST' && pathname === '/import') {
+          const body = await readBody(req);
+          let parsed: { project?: string; scenario?: string; viewport?: string };
+          try {
+            parsed = JSON.parse(body);
+          } catch {
+            respondError(res, 400, 'Invalid JSON'); return;
+          }
+
+          const projectPath = validateProjectPath(parsed.project || process.cwd());
+          if (!projectPath) { respondError(res, 400, 'Invalid or nonexistent project path'); return; }
+
+          if (!parsed.scenario || typeof parsed.scenario !== 'string') {
+            respondError(res, 400, 'scenario is required'); return;
+          }
+
+          const viewport = parsed.viewport || 'desktop';
+          const snapshot = {
+            url: 'imported',
+            viewport: { label: viewport, width: 1440, height: 900 },
+            timestamp: new Date().toISOString(),
+            elements: [],
+          };
+          await s.putSnapshot(projectPath, 'reference', parsed.scenario, viewport, snapshot as any);
+          respond(res, { status: 'imported', scenario: parsed.scenario, viewport });
+        }
+
         else {
           respondError(res, 404, 'Not found');
         }
       } catch (err: unknown) {
-        // Don't leak internal error details (file paths, stack traces)
-        const message = err instanceof Error && err.message === 'Request body too large'
-          ? 'Request body too large'
-          : 'Internal server error';
-        const status = message === 'Request body too large' ? 413 : 500;
-        respondError(res, status, message);
+        let errMessage: string;
+        if (err instanceof Error) {
+          errMessage = err.message;
+        } else if (typeof err === 'string') {
+          errMessage = err;
+        } else if (typeof err === 'object' && err !== null) {
+          // BackstopJS throws result objects with engineErrorMsg
+          const obj = err as Record<string, unknown>;
+          if (typeof obj.engineErrorMsg === 'string') {
+            errMessage = obj.engineErrorMsg.split('\n')[0];
+          } else {
+            try { errMessage = JSON.stringify(err); } catch { errMessage = 'Internal server error'; }
+          }
+        } else {
+          errMessage = 'Internal server error';
+        }
+        console.error('[eyeless] Request error:', errMessage);
+        const status = errMessage === 'Request body too large' ? 413 : 500;
+        respondError(res, status, errMessage);
       }
     });
 

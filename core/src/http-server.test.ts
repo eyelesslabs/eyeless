@@ -563,20 +563,18 @@ describe('HTTP server security', () => {
     assert.equal(res.status, 404);
   });
 
-  it('does not leak internal paths in error responses', async () => {
+  it('surfaces engine error message on 500', async () => {
     // POST to /check with valid project but the engine will fail (no BackstopJS running)
-    // The error message should be generic, not contain file paths
     const res = await request('POST', '/check', JSON.stringify({
       project: tmpDir,
       url: 'http://localhost:99999',
       label: 'test',
     }));
-    // Should get 500 with generic message
+    // Should get 500 with the actual error from the engine
     if (res.status === 500) {
       const body = JSON.parse(res.body);
-      assert.equal(body.error, 'Internal server error');
-      assert.ok(!body.error.includes(tmpDir));
-      assert.ok(!body.error.includes('/'));
+      assert.ok(typeof body.error === 'string');
+      assert.ok(body.error.length > 0);
     }
     // If the engine doesn't throw (unlikely), that's also fine
   });
@@ -589,5 +587,43 @@ describe('HTTP server security', () => {
 
     const res = await request('GET', `/screenshot/fakedir?project=${encodeURIComponent(tmpDir)}`);
     assert.equal(res.status, 404); // It's a directory, not a file
+  });
+
+  // --- POST /import ---
+
+  it('POST /import creates a baseline from uploaded image', async () => {
+    const res = await request('POST', '/import', JSON.stringify({
+      project: tmpDir,
+      scenario: 'my-screenshot',
+      viewport: 'desktop',
+    }));
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.status, 'imported');
+    assert.equal(body.scenario, 'my-screenshot');
+    assert.equal(body.viewport, 'desktop');
+
+    // Verify it shows up in baselines
+    const baselines = await request('GET', `/baselines?project=${encodeURIComponent(tmpDir)}`);
+    const list = JSON.parse(baselines.body);
+    assert.equal(list.baselines.length, 1);
+    assert.equal(list.baselines[0].scenario, 'my-screenshot');
+    assert.equal(list.baselines[0].viewport, 'desktop');
+    assert.equal(list.baselines[0].url, 'imported');
+  });
+
+  it('POST /import returns 400 for missing scenario', async () => {
+    const res = await request('POST', '/import', JSON.stringify({
+      project: tmpDir,
+    }));
+    assert.equal(res.status, 400);
+  });
+
+  it('POST /import returns 400 for invalid project', async () => {
+    const res = await request('POST', '/import', JSON.stringify({
+      project: '/nonexistent/path',
+      scenario: 'test',
+    }));
+    assert.equal(res.status, 400);
   });
 });
