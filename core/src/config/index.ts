@@ -1,19 +1,24 @@
-import * as fs from 'fs';
 import * as path from 'path';
-import { EyelessConfig, Viewport } from '../types';
-import { BaselineEntry } from '../output';
+import { EyelessConfig, Viewport, StyleSnapshot, VersionEntry } from '../types';
+import { Storage } from '../storage/types';
+import { sanitizeLabel } from '../attributor/styles';
 
-const DEFAULT_VIEWPORTS: Viewport[] = [
+export const DEFAULT_VIEWPORTS: Viewport[] = [
   { label: 'desktop', width: 1920, height: 1080 },
 ];
 
-const DEFAULT_CONFIG: EyelessConfig = {
+export const DEFAULT_CONFIG: EyelessConfig = {
   url: 'http://localhost:5173',
   viewports: DEFAULT_VIEWPORTS,
   threshold: 0.1,
   scenarios: [],
   ignore: [],
 };
+
+export const MAX_HISTORY_ENTRIES = 100;
+export const DEFAULT_MAX_VERSIONS = 20;
+
+// --- Path helpers (pure functions, no I/O) ---
 
 export function getProjectRoot(projectPath?: string): string {
   return projectPath || process.cwd();
@@ -39,16 +44,19 @@ export function getHistoryPath(projectPath?: string): string {
   return path.join(getEyelessDir(projectPath), 'history.json');
 }
 
-export function loadConfig(projectPath?: string): EyelessConfig {
-  const configPath = getConfigPath(projectPath);
+export function getVersionsDir(projectPath?: string): string {
+  return path.join(getEyelessDir(projectPath), 'versions');
+}
 
-  if (!fs.existsSync(configPath)) {
-    return { ...DEFAULT_CONFIG };
-  }
+// --- Config loading (merges raw config with defaults) ---
 
-  const raw = fs.readFileSync(configPath, 'utf-8');
-  const userConfig = JSON.parse(raw) as Partial<EyelessConfig>;
-
+/**
+ * Load project config from storage, merging with defaults.
+ * Returns a complete EyelessConfig with all fields populated.
+ */
+export async function loadConfig(storage: Storage, projectPath: string): Promise<EyelessConfig> {
+  const userConfig = await storage.getConfig(projectPath);
+  if (!userConfig) return { ...DEFAULT_CONFIG };
   return {
     ...DEFAULT_CONFIG,
     ...userConfig,
@@ -56,56 +64,86 @@ export function loadConfig(projectPath?: string): EyelessConfig {
   };
 }
 
-export function saveConfig(config: EyelessConfig, projectPath?: string): void {
-  const eyelessDir = getEyelessDir(projectPath);
+// --- Composition helpers (multi-step operations on Storage) ---
 
-  if (!fs.existsSync(eyelessDir)) {
-    fs.mkdirSync(eyelessDir, { recursive: true });
-  }
+/**
+ * Save the current reference snapshot (and optional bitmap) as a version backup.
+ * Called before capture overwrites the reference.
+ */
+export async function saveVersion(
+  storage: Storage,
+  projectPath: string,
+  scenario: string,
+  viewport: string,
+  maxVersions?: number,
+): Promise<void> {
+  const cap = maxVersions ?? DEFAULT_MAX_VERSIONS;
 
-  fs.writeFileSync(getConfigPath(projectPath), JSON.stringify(config, null, 2));
-}
+  // Read current reference snapshot
+  const currentSnapshot = await storage.getSnapshot(projectPath, 'reference', scenario, viewport);
+  if (!currentSnapshot) return; // Nothing to version
 
-export function ensureDirectories(projectPath?: string): void {
-  const dirs = [
-    getEyelessDir(projectPath),
-    getBaselinesDir(projectPath),
-    getSnapshotsDir(projectPath),
-  ];
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 
-  for (const dir of dirs) {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-  }
-}
+  // Save snapshot as version
+  await storage.putVersion(projectPath, scenario, viewport, timestamp, currentSnapshot);
 
-export function listBaselines(projectPath: string): BaselineEntry[] {
-  const snapshotsDir = getSnapshotsDir(projectPath);
-  const refDir = path.join(snapshotsDir, 'reference');
-  const baselines: BaselineEntry[] = [];
-
-  if (!fs.existsSync(refDir)) return baselines;
-
-  const files = fs.readdirSync(refDir).filter(f => f.endsWith('.json'));
-  for (const file of files) {
-    try {
-      const snapshot = JSON.parse(fs.readFileSync(path.join(refDir, file), 'utf-8'));
-      const parts = file.replace('.json', '').split('_');
-      const viewport = parts.pop() || 'desktop';
-      const scenario = parts.join('_');
-
-      baselines.push({
-        scenario,
-        viewport,
-        elementCount: Array.isArray(snapshot.elements) ? snapshot.elements.length : 0,
-        timestamp: typeof snapshot.timestamp === 'string' ? snapshot.timestamp : '',
-        url: typeof snapshot.url === 'string' ? snapshot.url : '',
-      });
-    } catch {
-      // Skip malformed snapshot files
+  // Save bitmap if it exists
+  const bitmapFiles = await storage.listBinaries(projectPath, 'baselines/bitmaps_reference');
+  const bitmapFile = bitmapFiles.find(f =>
+    f.endsWith('.png') && f.includes(`_${scenario}_`) && f.includes(`_${viewport}.png`)
+  );
+  if (bitmapFile) {
+    const bitmapData = await storage.getBinary(projectPath, `baselines/bitmaps_reference/${bitmapFile}`);
+    if (bitmapData) {
+      const key = `${sanitizeLabel(scenario)}_${sanitizeLabel(viewport)}`;
+      await storage.putBinary(projectPath, `versions/${key}/${timestamp}.png`, bitmapData);
     }
   }
 
-  return baselines;
+  // Prune old versions
+  await storage.pruneVersions(projectPath, scenario, viewport, cap);
+}
+
+/**
+ * Restore a previous version as the current reference baseline.
+ * Returns true if the version was found and restored, false otherwise.
+ */
+export async function restoreVersion(
+  storage: Storage,
+  projectPath: string,
+  scenario: string,
+  viewport: string,
+  versionTimestamp: string,
+): Promise<boolean> {
+  // Read the version snapshot
+  const snapshot = await storage.getVersion(projectPath, scenario, viewport, versionTimestamp);
+  if (!snapshot) return false;
+
+  // Restore snapshot as current reference
+  await storage.putSnapshot(projectPath, 'reference', scenario, viewport, snapshot);
+
+  // Restore bitmap if the version has one
+  const key = `${sanitizeLabel(scenario)}_${sanitizeLabel(viewport)}`;
+  const safeTimestamp = versionTimestamp.replace(/[^a-zA-Z0-9\-T.Z]/g, '');
+  const versionBitmapData = await storage.getBinary(projectPath, `versions/${key}/${safeTimestamp}.png`);
+
+  if (versionBitmapData) {
+    // Remove existing bitmaps for this scenario/viewport
+    const existingBitmaps = await storage.listBinaries(projectPath, 'baselines/bitmaps_reference');
+    for (const old of existingBitmaps) {
+      if (old.endsWith('.png') && old.includes(`_${scenario}_`) && old.includes(`_${viewport}.png`)) {
+        await storage.deleteBinary(projectPath, `baselines/bitmaps_reference/${old}`);
+      }
+    }
+
+    // Copy version bitmap with a standard name
+    await storage.putBinary(
+      projectPath,
+      `baselines/bitmaps_reference/eyeless_${scenario}_0_document_0_${viewport}.png`,
+      versionBitmapData,
+    );
+  }
+
+  return true;
 }

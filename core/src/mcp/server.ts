@@ -3,9 +3,13 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { capture, check } from '../engine';
 import { formatCheckResult, formatCaptureResult, formatBaselinesList, formatSnapshotInspection } from '../output';
-import { getSnapshotsDir, listBaselines, loadConfig } from '../config';
-import { loadSnapshot, getSnapshotPath } from '../attributor/compare';
+import { loadConfig, restoreVersion } from '../config';
 import { resolveProjectPath } from '../validation';
+import { generateExportHtml } from '../export';
+import { Storage } from '../storage/types';
+import { getDefaultStorage } from '../storage';
+import { SnapshotEntry } from '../storage/types';
+import { BaselineEntry } from '../output';
 
 /**
  * Sanitize error messages for MCP responses.
@@ -23,7 +27,20 @@ function sanitizeError(err: unknown): string {
   return msg;
 }
 
-export function createServer(): McpServer {
+/** Convert SnapshotEntry[] to BaselineEntry[] for output formatting */
+function toBaselineEntries(entries: SnapshotEntry[]): BaselineEntry[] {
+  return entries.map(e => ({
+    scenario: e.scenario,
+    viewport: e.viewport,
+    elementCount: e.elementCount,
+    timestamp: e.timestamp,
+    url: e.url,
+  }));
+}
+
+export function createServer(storage?: Storage): McpServer {
+  const s = storage || getDefaultStorage();
+
   const server = new McpServer({
     name: 'eyeless',
     version: '0.3.3',
@@ -74,7 +91,7 @@ Use different labels to capture multiple states of the same URL (e.g. "homepage"
     async ({ url, label, project, interactions, waitFor }) => {
       try {
         const projectPath = resolveProjectPath(project);
-        const results = await capture({ url, label, project: projectPath, interactions, waitFor });
+        const results = await capture({ url, label, project: projectPath, interactions, waitFor, storage: s });
         const text = results.map(formatCaptureResult).join('\n---\n');
         return { content: [{ type: 'text', text }] };
       } catch (err: any) {
@@ -113,7 +130,7 @@ See eyeless_capture for full documentation on interactions and waitFor options.`
     async ({ url, label, project, interactions, waitFor }) => {
       try {
         const projectPath = resolveProjectPath(project);
-        const results = await check({ url, label, project: projectPath, interactions, waitFor });
+        const results = await check({ url, label, project: projectPath, interactions, waitFor, storage: s });
         const text = results.map(formatCheckResult).join('\n---\n');
         return { content: [{ type: 'text', text }] };
       } catch (err: any) {
@@ -134,7 +151,8 @@ See eyeless_capture for full documentation on interactions and waitFor options.`
     async ({ project }) => {
       try {
         const projectPath = resolveProjectPath(project);
-        const baselines = listBaselines(projectPath);
+        const snapshots = await s.listSnapshots(projectPath, 'reference');
+        const baselines = toBaselineEntries(snapshots);
         const text = formatBaselinesList(baselines);
         return { content: [{ type: 'text', text }] };
       } catch (err: any) {
@@ -157,13 +175,11 @@ See eyeless_capture for full documentation on interactions and waitFor options.`
     async ({ project, label, viewport }) => {
       try {
         const projectPath = resolveProjectPath(project);
-        const snapshotsDir = getSnapshotsDir(projectPath);
-        const config = loadConfig(projectPath);
+        const config = await loadConfig(s, projectPath);
         const scenarioLabel = label || 'default';
         const viewportLabel = viewport || config.viewports[0]?.label || 'desktop';
 
-        const snapshotPath = getSnapshotPath(snapshotsDir, 'reference', scenarioLabel, viewportLabel);
-        const snapshot = loadSnapshot(snapshotPath);
+        const snapshot = await s.getSnapshot(projectPath, 'reference', scenarioLabel, viewportLabel);
 
         if (!snapshot) {
           return {
@@ -176,6 +192,128 @@ See eyeless_capture for full documentation on interactions and waitFor options.`
       } catch (err: any) {
         return {
           content: [{ type: 'text', text: `Inspect failed: ${sanitizeError(err)}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    'eyeless_history',
+    'View check history for a project. Returns summary list by default, or full detail for a specific entry by index.',
+    {
+      project: z.string().optional().describe('Path to the project directory. Defaults to cwd.'),
+      index: z.number().optional().describe('History entry index to get full detail. Omit for summary list.'),
+      limit: z.number().optional().describe('Max entries to return in summary mode. Default 10.'),
+    },
+    async ({ project, index, limit }) => {
+      try {
+        const projectPath = resolveProjectPath(project);
+        const history = await s.getHistory(projectPath);
+
+        if (index !== undefined) {
+          if (index < 0 || index >= history.length) {
+            return { content: [{ type: 'text', text: `History entry #${index} not found. ${history.length} entries available.` }] };
+          }
+          const entry = history[index];
+          return { content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }] };
+        }
+
+        if (history.length === 0) {
+          return { content: [{ type: 'text', text: 'No check history found.' }] };
+        }
+
+        const n = limit || 10;
+        const recent = history.slice(-n);
+        const startIdx = history.length - recent.length;
+        const lines: string[] = [`Check history (${recent.length} of ${history.length} entries):\n`];
+        for (let i = 0; i < recent.length; i++) {
+          const entry = recent[i];
+          for (const r of entry.results) {
+            lines.push(`#${startIdx + i}  ${entry.timestamp}  ${r.scenario} @ ${r.viewport}  ${r.status.toUpperCase()}  ${r.matchPercentage.toFixed(1)}%  ${r.drifts.length} drift(s)`);
+          }
+        }
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
+      } catch (err: any) {
+        return {
+          content: [{ type: 'text', text: `History failed: ${sanitizeError(err)}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    'eyeless_versions',
+    'List baseline versions for a scenario, or restore a previous version.',
+    {
+      project: z.string().optional().describe('Path to the project directory. Defaults to cwd.'),
+      label: z.string().optional().describe('Scenario label. Defaults to "default".'),
+      viewport: z.string().optional().describe('Viewport label. Defaults to "desktop".'),
+      restore: z.string().optional().describe('Version timestamp to restore as current baseline. Omit to list versions.'),
+    },
+    async ({ project, label, viewport, restore }) => {
+      try {
+        const projectPath = resolveProjectPath(project);
+        const scenarioLabel = label || 'default';
+        const viewportLabel = viewport || 'desktop';
+
+        if (restore) {
+          const success = await restoreVersion(s, projectPath, scenarioLabel, viewportLabel, restore);
+          if (!success) {
+            return { content: [{ type: 'text', text: `Version "${restore}" not found for ${scenarioLabel} @ ${viewportLabel}.` }] };
+          }
+          return { content: [{ type: 'text', text: `Restored version ${restore} as current baseline for ${scenarioLabel} @ ${viewportLabel}.` }] };
+        }
+
+        const versions = await s.listVersions(projectPath, scenarioLabel, viewportLabel);
+        if (versions.length === 0) {
+          return { content: [{ type: 'text', text: `No versions found for ${scenarioLabel} @ ${viewportLabel}.` }] };
+        }
+
+        const lines: string[] = [`Versions for ${scenarioLabel} @ ${viewportLabel} (${versions.length}):\n`];
+        for (let i = 0; i < versions.length; i++) {
+          const v = versions[i];
+          const hasBitmap = v.bitmapPath ? ' (with screenshot)' : '';
+          lines.push(`  ${i}: ${v.timestamp}${hasBitmap}`);
+        }
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
+      } catch (err: any) {
+        return {
+          content: [{ type: 'text', text: `Versions failed: ${sanitizeError(err)}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    'eyeless_export',
+    'Export a check result as a self-contained HTML report with inline screenshots and drift details.',
+    {
+      project: z.string().optional().describe('Path to the project directory. Defaults to cwd.'),
+      checkIndex: z.number().optional().describe('History entry index to export. Defaults to the latest check.'),
+    },
+    async ({ project, checkIndex }) => {
+      try {
+        const projectPath = resolveProjectPath(project);
+        const history = await s.getHistory(projectPath);
+
+        if (history.length === 0) {
+          return { content: [{ type: 'text', text: 'No check history found. Run eyeless_check first.' }] };
+        }
+
+        const idx = checkIndex !== undefined ? checkIndex : history.length - 1;
+        if (idx < 0 || idx >= history.length) {
+          return { content: [{ type: 'text', text: `History entry #${idx} not found. ${history.length} entries available.` }] };
+        }
+
+        const entry = history[idx];
+        const html = await generateExportHtml(entry, projectPath, s);
+        return { content: [{ type: 'text', text: html }] };
+      } catch (err: any) {
+        return {
+          content: [{ type: 'text', text: `Export failed: ${sanitizeError(err)}` }],
           isError: true,
         };
       }

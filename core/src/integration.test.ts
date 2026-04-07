@@ -4,8 +4,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { capture, check } from './engine';
-import { saveConfig, getBaselinesDir } from './config';
+import { getBaselinesDir } from './config';
 import { EyelessConfig } from './types';
+import { FileStorage } from './storage/file-storage';
 
 const TEST_HTML = path.resolve(__dirname, '..', 'src', 'integration.test.html');
 
@@ -16,7 +17,7 @@ let tmpProject: string;
  * These tests exercise the full pipeline: config → BackstopJS → Playwright → snapshot.
  */
 describe('integration: multi-state capture', { timeout: 120_000 }, () => {
-  before(() => {
+  before(async () => {
     tmpProject = fs.mkdtempSync(path.join(os.tmpdir(), 'eyeless-integration-'));
     const config: EyelessConfig = {
       url: `file://${TEST_HTML}`,
@@ -25,7 +26,7 @@ describe('integration: multi-state capture', { timeout: 120_000 }, () => {
       scenarios: [],
       ignore: [],
     };
-    saveConfig(config, tmpProject);
+    await new FileStorage().putConfig(tmpProject, config);
   });
 
   after(() => {
@@ -174,7 +175,7 @@ describe('integration: multi-state capture', { timeout: 120_000 }, () => {
 describe('integration: multi-scenario without label', { timeout: 120_000 }, () => {
   let tmpProject: string;
 
-  before(() => {
+  before(async () => {
     tmpProject = fs.mkdtempSync(path.join(os.tmpdir(), 'eyeless-multi-scenario-'));
     const config: EyelessConfig = {
       url: `file://${TEST_HTML}`,
@@ -190,7 +191,7 @@ describe('integration: multi-scenario without label', { timeout: 120_000 }, () =
       ],
       ignore: [],
     };
-    saveConfig(config, tmpProject);
+    await new FileStorage().putConfig(tmpProject, config);
   });
 
   after(() => {

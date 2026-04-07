@@ -6,6 +6,8 @@ export interface EyelessConfig {
   threshold: number;
   scenarios: ScenarioConfig[];
   ignore: IgnoreRule[];
+  /** Maximum number of baseline versions to keep per scenario. Default: 20 */
+  maxVersions?: number;
 }
 
 export interface Viewport {
@@ -96,6 +98,21 @@ export interface CheckResult {
   summary: string;
   referenceImage?: string;
   testImage?: string;
+}
+
+/** A single history entry (one check run) */
+export interface HistoryEntry {
+  timestamp: string;
+  results: CheckResult[];
+}
+
+/** A version of a baseline snapshot */
+export interface VersionEntry {
+  timestamp: string;
+  scenario: string;
+  viewport: string;
+  snapshotPath: string;
+  bitmapPath?: string;
 }
 
 /** Result of an eyeless_capture call */

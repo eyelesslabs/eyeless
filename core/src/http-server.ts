@@ -1,10 +1,12 @@
 import * as http from 'http';
-import * as fs from 'fs';
 import * as path from 'path';
-import { loadConfig, saveConfig, ensureDirectories, listBaselines, getEyelessDir, getHistoryPath } from './config';
+import { loadConfig, getEyelessDir, restoreVersion } from './config';
 import { capture, check, EngineOptions } from './engine';
-import { EyelessConfig, CheckResult } from './types';
+import { EyelessConfig } from './types';
 import { validateProjectPath } from './validation';
+import { generateExportHtml } from './export';
+import { Storage } from './storage/types';
+import { getDefaultStorage } from './storage';
 
 // --- Security constants ---
 const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MB
@@ -104,6 +106,12 @@ function validateConfig(config: unknown): string | null {
     if (typeof rule.selector !== 'string') return `config.ignore[${i}].selector must be a string`;
   }
 
+  if (c.maxVersions !== undefined) {
+    if (typeof c.maxVersions !== 'number' || !Number.isInteger(c.maxVersions) || c.maxVersions < 1 || c.maxVersions > 1000) {
+      return 'config.maxVersions must be a positive integer between 1 and 1000';
+    }
+  }
+
   return null; // Valid
 }
 
@@ -138,9 +146,6 @@ function validateRuntimeActions(interactions?: unknown[], waitFor?: unknown[]): 
 
 /**
  * Validate a file path stays within a base directory.
- * Uses realpathSync on the base to handle symlinks correctly.
- * The path.sep suffix prevents sibling-directory prefix attacks
- * (e.g. /foo/.eyeless-evil matching /foo/.eyeless).
  */
 function isPathWithinBase(filePath: string, baseDir: string): boolean {
   const resolvedBase = path.resolve(baseDir);
@@ -150,7 +155,6 @@ function isPathWithinBase(filePath: string, baseDir: string): boolean {
 
 /**
  * Read request body with a size limit.
- * Returns the body string, or rejects with an error if the limit is exceeded.
  */
 function readBody(req: http.IncomingMessage, maxBytes: number = MAX_BODY_BYTES): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -177,11 +181,11 @@ function readBody(req: http.IncomingMessage, maxBytes: number = MAX_BODY_BYTES):
 
 /**
  * Parse and validate the shared fields for POST /capture and POST /check.
- * Returns validated EngineOptions on success, or sends an error response and returns null.
  */
 async function parseEngineRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
+  storage: Storage,
 ): Promise<EngineOptions | null> {
   const body = await readBody(req);
   let parsed: { project?: string; url?: string; label?: string; interactions?: any[]; waitFor?: any[] };
@@ -210,6 +214,7 @@ async function parseEngineRequest(
     label: parsed.label,
     interactions: parsed.interactions,
     waitFor: parsed.waitFor,
+    storage,
   };
 }
 
@@ -223,41 +228,9 @@ function respondError(res: http.ServerResponse, status: number, message: string)
   res.end(JSON.stringify({ error: message }));
 }
 
-interface HistoryEntry {
-  timestamp: string;
-  results: CheckResult[];
-}
+export function startHttpServer(port: number = 0, storage?: Storage): Promise<HttpServerHandle> {
+  const s = storage || getDefaultStorage();
 
-function loadHistory(projectPath: string): HistoryEntry[] {
-  const historyPath = getHistoryPath(projectPath);
-  if (!fs.existsSync(historyPath)) return [];
-  try {
-    const raw = fs.readFileSync(historyPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function appendHistory(projectPath: string, results: CheckResult[]): void {
-  const history = loadHistory(projectPath);
-  history.push({ timestamp: new Date().toISOString(), results });
-
-  // Trim to max entries
-  while (history.length > MAX_HISTORY_ENTRIES) {
-    history.shift();
-  }
-
-  const historyPath = getHistoryPath(projectPath);
-  const dir = path.dirname(historyPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(historyPath, JSON.stringify(history, null, 2));
-}
-
-export function startHttpServer(port: number = 0): Promise<HttpServerHandle> {
   return new Promise((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
       const url = new URL(req.url || '/', `http://localhost`);
@@ -276,7 +249,7 @@ export function startHttpServer(port: number = 0): Promise<HttpServerHandle> {
           const projectPath = validateProjectPath(url.searchParams.get('project') || process.cwd());
           if (!projectPath) { respondError(res, 400, 'Invalid or nonexistent project path'); return; }
 
-          const config = loadConfig(projectPath);
+          const config = await loadConfig(s, projectPath);
           respond(res, config);
         }
 
@@ -296,7 +269,7 @@ export function startHttpServer(port: number = 0): Promise<HttpServerHandle> {
           const configError = validateConfig(parsed.config);
           if (configError) { respondError(res, 400, configError); return; }
 
-          saveConfig(parsed.config as EyelessConfig, projectPath);
+          await s.putConfig(projectPath, parsed.config as EyelessConfig);
           respond(res, { status: 'saved' });
         }
 
@@ -305,13 +278,13 @@ export function startHttpServer(port: number = 0): Promise<HttpServerHandle> {
           const projectPath = validateProjectPath(url.searchParams.get('project') || process.cwd());
           if (!projectPath) { respondError(res, 400, 'Invalid or nonexistent project path'); return; }
 
-          const baselines = listBaselines(projectPath);
+          const baselines = await s.listSnapshots(projectPath, 'reference');
           respond(res, { baselines });
         }
 
         // --- POST /capture ---
         else if (req.method === 'POST' && pathname === '/capture') {
-          const opts = await parseEngineRequest(req, res);
+          const opts = await parseEngineRequest(req, res, s);
           if (!opts) return;
 
           const results = await capture(opts);
@@ -320,11 +293,11 @@ export function startHttpServer(port: number = 0): Promise<HttpServerHandle> {
 
         // --- POST /check ---
         else if (req.method === 'POST' && pathname === '/check') {
-          const opts = await parseEngineRequest(req, res);
+          const opts = await parseEngineRequest(req, res, s);
           if (!opts) return;
 
           const results = await check(opts);
-          appendHistory(opts.project!, results);
+          await s.appendHistory(opts.project!, { timestamp: new Date().toISOString(), results });
           respond(res, { results });
         }
 
@@ -336,7 +309,7 @@ export function startHttpServer(port: number = 0): Promise<HttpServerHandle> {
           const limitParam = url.searchParams.get('limit');
           const limit = limitParam ? Math.max(1, Math.min(MAX_HISTORY_ENTRIES, parseInt(limitParam, 10) || 50)) : 50;
 
-          const history = loadHistory(projectPath);
+          const history = await s.getHistory(projectPath);
           // Flatten: each check result becomes its own entry with the parent timestamp
           const flat = history.flatMap(entry =>
             entry.results.map(r => ({
@@ -350,6 +323,90 @@ export function startHttpServer(port: number = 0): Promise<HttpServerHandle> {
           );
           const recent = flat.slice(-limit);
           respond(res, { history: recent });
+        }
+
+        // --- GET /history/:id ---
+        else if (req.method === 'GET' && /^\/history\/\d+$/.test(pathname)) {
+          const projectPath = validateProjectPath(url.searchParams.get('project') || process.cwd());
+          if (!projectPath) { respondError(res, 400, 'Invalid or nonexistent project path'); return; }
+
+          const id = pathname.split('/')[2];
+          const entry = await s.getHistoryEntry(projectPath, id);
+
+          if (!entry) {
+            respondError(res, 404, 'History entry not found');
+            return;
+          }
+
+          respond(res, entry);
+        }
+
+        // --- GET /baselines/:scenario/versions ---
+        else if (req.method === 'GET' && /^\/baselines\/[^/]+\/versions$/.test(pathname)) {
+          const projectPath = validateProjectPath(url.searchParams.get('project') || process.cwd());
+          if (!projectPath) { respondError(res, 400, 'Invalid or nonexistent project path'); return; }
+
+          const scenario = decodeURIComponent(pathname.split('/')[2]);
+          const viewport = url.searchParams.get('viewport') || 'desktop';
+          const versions = await s.listVersions(projectPath, scenario, viewport);
+          respond(res, { versions });
+        }
+
+        // --- POST /baselines/:scenario/restore ---
+        else if (req.method === 'POST' && /^\/baselines\/[^/]+\/restore$/.test(pathname)) {
+          const body = await readBody(req);
+          let parsed: { project?: string; viewport?: string; version: string };
+          try {
+            parsed = JSON.parse(body);
+          } catch {
+            respondError(res, 400, 'Invalid JSON'); return;
+          }
+
+          const projectPath = validateProjectPath(parsed.project || process.cwd());
+          if (!projectPath) { respondError(res, 400, 'Invalid or nonexistent project path'); return; }
+
+          if (!parsed.version || typeof parsed.version !== 'string') {
+            respondError(res, 400, 'version is required'); return;
+          }
+
+          const scenario = decodeURIComponent(pathname.split('/')[2]);
+          const viewport = parsed.viewport || 'desktop';
+          const restored = await restoreVersion(s, projectPath, scenario, viewport, parsed.version);
+
+          if (!restored) {
+            respondError(res, 404, 'Version not found'); return;
+          }
+
+          respond(res, { status: 'restored', scenario, viewport, version: parsed.version });
+        }
+
+        // --- POST /export ---
+        else if (req.method === 'POST' && pathname === '/export') {
+          const body = await readBody(req);
+          let parsed: { project?: string; checkIndex?: number };
+          try {
+            parsed = JSON.parse(body);
+          } catch {
+            respondError(res, 400, 'Invalid JSON'); return;
+          }
+
+          const projectPath = validateProjectPath(parsed.project || process.cwd());
+          if (!projectPath) { respondError(res, 400, 'Invalid or nonexistent project path'); return; }
+
+          const history = await s.getHistory(projectPath);
+          if (history.length === 0) {
+            respondError(res, 404, 'No check history found'); return;
+          }
+
+          const idx = parsed.checkIndex !== undefined ? parsed.checkIndex : history.length - 1;
+          if (idx < 0 || idx >= history.length) {
+            respondError(res, 404, 'History entry not found'); return;
+          }
+
+          const entry = history[idx];
+          const html = await generateExportHtml(entry, projectPath, s);
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end(html);
         }
 
         // --- POST /approve ---
@@ -369,8 +426,8 @@ export function startHttpServer(port: number = 0): Promise<HttpServerHandle> {
             respondError(res, 400, 'label is required'); return;
           }
 
-          const config = loadConfig(projectPath);
-          const results = await capture({ project: projectPath, url: config.url, label: parsed.label });
+          const config = await loadConfig(s, projectPath);
+          const results = await capture({ project: projectPath, url: config.url, label: parsed.label, storage: s });
           respond(res, { status: 'approved', results });
         }
 
@@ -384,15 +441,14 @@ export function startHttpServer(port: number = 0): Promise<HttpServerHandle> {
           const fullPath = path.resolve(eyelessDir, imagePath);
 
           // Guard: resolved path must be within the eyeless directory
-          // Uses path.sep suffix to prevent sibling-directory prefix attacks
           if (!isPathWithinBase(fullPath, eyelessDir)) {
             respondError(res, 403, 'Forbidden');
             return;
           }
 
-          if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+          const data = await s.getBinary(projectPath, imagePath);
+          if (data) {
             res.setHeader('Content-Type', 'image/png');
-            const data = fs.readFileSync(fullPath);
             res.writeHead(200);
             res.end(data);
           } else {

@@ -5,11 +5,14 @@ import * as os from 'os';
 import * as path from 'path';
 import { findScreenshot, resolveScenarios } from './engine';
 import { EyelessConfig } from './types';
+import { FileStorage } from './storage/file-storage';
 
 let tmpDir: string;
+let storage: FileStorage;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'eyeless-engine-test-'));
+  storage = new FileStorage();
 });
 
 afterEach(() => {
@@ -17,29 +20,32 @@ afterEach(() => {
 });
 
 describe('findScreenshot', () => {
-  it('returns undefined for missing directory', () => {
-    const result = findScreenshot('/nonexistent/dir', 'default', 'desktop');
+  it('returns undefined for missing directory', async () => {
+    const result = await findScreenshot(storage, tmpDir, 'nonexistent/dir', 'default', 'desktop');
     assert.equal(result, undefined);
   });
 
-  it('returns undefined when no matching file exists', () => {
-    fs.writeFileSync(path.join(tmpDir, 'unrelated.png'), '');
-    const result = findScreenshot(tmpDir, 'default', 'desktop');
+  it('returns undefined when no matching file exists', async () => {
+    const dir = 'test_bitmaps';
+    await storage.putBinary(tmpDir, `${dir}/unrelated.png`, Buffer.from(''));
+    const result = await findScreenshot(storage, tmpDir, dir, 'default', 'desktop');
     assert.equal(result, undefined);
   });
 
-  it('matches correct file by label and viewport', () => {
+  it('matches correct file by label and viewport', async () => {
+    const dir = 'test_bitmaps';
     const filename = 'eyeless_default_0_document_0_desktop.png';
-    fs.writeFileSync(path.join(tmpDir, filename), '');
-    fs.writeFileSync(path.join(tmpDir, 'eyeless_other_0_document_0_tablet.png'), '');
+    await storage.putBinary(tmpDir, `${dir}/${filename}`, Buffer.from(''));
+    await storage.putBinary(tmpDir, `${dir}/eyeless_other_0_document_0_tablet.png`, Buffer.from(''));
 
-    const result = findScreenshot(tmpDir, 'default', 'desktop');
-    assert.equal(result, path.join(tmpDir, filename));
+    const result = await findScreenshot(storage, tmpDir, dir, 'default', 'desktop');
+    assert.equal(result, filename);
   });
 
-  it('ignores non-PNG files', () => {
-    fs.writeFileSync(path.join(tmpDir, 'eyeless_default_0_document_0_desktop.json'), '');
-    const result = findScreenshot(tmpDir, 'default', 'desktop');
+  it('ignores non-PNG files', async () => {
+    const dir = 'test_bitmaps';
+    await storage.putBinary(tmpDir, `${dir}/eyeless_default_0_document_0_desktop.json`, Buffer.from(''));
+    const result = await findScreenshot(storage, tmpDir, dir, 'default', 'desktop');
     assert.equal(result, undefined);
   });
 });

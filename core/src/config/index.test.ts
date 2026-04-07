@@ -10,15 +10,15 @@ import {
   getBaselinesDir,
   getSnapshotsDir,
   loadConfig,
-  saveConfig,
-  ensureDirectories,
-  listBaselines,
 } from './index';
+import { FileStorage } from '../storage/file-storage';
 
 let tmpDir: string;
+let storage: FileStorage;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'eyeless-config-test-'));
+  storage = new FileStorage();
 });
 
 afterEach(() => {
@@ -52,8 +52,8 @@ describe('path utilities', () => {
 });
 
 describe('loadConfig', () => {
-  it('returns defaults when no config file exists', () => {
-    const config = loadConfig(tmpDir);
+  it('returns defaults when no config file exists', async () => {
+    const config = await loadConfig(storage, tmpDir);
     assert.equal(config.url, 'http://localhost:5173');
     assert.equal(config.threshold, 0.1);
     assert.equal(config.viewports.length, 1);
@@ -62,7 +62,7 @@ describe('loadConfig', () => {
     assert.deepEqual(config.ignore, []);
   });
 
-  it('merges user config with defaults', () => {
+  it('merges user config with defaults', async () => {
     const eyelessDir = path.join(tmpDir, '.eyeless');
     fs.mkdirSync(eyelessDir, { recursive: true });
     fs.writeFileSync(
@@ -70,7 +70,7 @@ describe('loadConfig', () => {
       JSON.stringify({ url: 'http://example.com', threshold: 0.5 }),
     );
 
-    const config = loadConfig(tmpDir);
+    const config = await loadConfig(storage, tmpDir);
     assert.equal(config.url, 'http://example.com');
     assert.equal(config.threshold, 0.5);
     // Viewports should fall back to defaults when not specified
@@ -78,7 +78,7 @@ describe('loadConfig', () => {
     assert.equal(config.viewports[0].label, 'desktop');
   });
 
-  it('uses user-provided viewports when specified', () => {
+  it('uses user-provided viewports when specified', async () => {
     const eyelessDir = path.join(tmpDir, '.eyeless');
     fs.mkdirSync(eyelessDir, { recursive: true });
     fs.writeFileSync(
@@ -89,14 +89,14 @@ describe('loadConfig', () => {
       }),
     );
 
-    const config = loadConfig(tmpDir);
+    const config = await loadConfig(storage, tmpDir);
     assert.equal(config.viewports.length, 1);
     assert.equal(config.viewports[0].label, 'mobile');
   });
 });
 
-describe('saveConfig', () => {
-  it('creates .eyeless dir and writes config file', () => {
+describe('putConfig (via storage)', () => {
+  it('creates .eyeless dir and writes config file', async () => {
     const config = {
       url: 'http://test.com',
       viewports: [{ label: 'tablet', width: 768, height: 1024 }],
@@ -105,7 +105,7 @@ describe('saveConfig', () => {
       ignore: [{ selector: '.ad', reason: 'Dynamic ad content' }],
     };
 
-    saveConfig(config, tmpDir);
+    await storage.putConfig(tmpDir, config);
 
     const configPath = path.join(tmpDir, '.eyeless', 'config.json');
     assert.ok(fs.existsSync(configPath));
@@ -118,36 +118,36 @@ describe('saveConfig', () => {
   });
 });
 
-describe('ensureDirectories', () => {
-  it('creates all three directories', () => {
-    ensureDirectories(tmpDir);
+describe('ensureDirectories (via storage)', () => {
+  it('creates all three directories', async () => {
+    await storage.ensureDirectories(tmpDir);
 
     assert.ok(fs.existsSync(path.join(tmpDir, '.eyeless')));
     assert.ok(fs.existsSync(path.join(tmpDir, '.eyeless', 'baselines')));
     assert.ok(fs.existsSync(path.join(tmpDir, '.eyeless', 'snapshots')));
   });
 
-  it('is idempotent', () => {
-    ensureDirectories(tmpDir);
-    ensureDirectories(tmpDir);
+  it('is idempotent', async () => {
+    await storage.ensureDirectories(tmpDir);
+    await storage.ensureDirectories(tmpDir);
     assert.ok(fs.existsSync(path.join(tmpDir, '.eyeless')));
   });
 });
 
-describe('listBaselines', () => {
-  it('returns empty array when no snapshots directory exists', () => {
-    const result = listBaselines(tmpDir);
+describe('listSnapshots (via storage)', () => {
+  it('returns empty array when no snapshots directory exists', async () => {
+    const result = await storage.listSnapshots(tmpDir, 'reference');
     assert.deepEqual(result, []);
   });
 
-  it('returns empty array when reference directory is empty', () => {
+  it('returns empty array when reference directory is empty', async () => {
     const refDir = path.join(tmpDir, '.eyeless', 'snapshots', 'reference');
     fs.mkdirSync(refDir, { recursive: true });
-    const result = listBaselines(tmpDir);
+    const result = await storage.listSnapshots(tmpDir, 'reference');
     assert.deepEqual(result, []);
   });
 
-  it('parses snapshot files into baseline entries', () => {
+  it('parses snapshot files into baseline entries', async () => {
     const refDir = path.join(tmpDir, '.eyeless', 'snapshots', 'reference');
     fs.mkdirSync(refDir, { recursive: true });
 
@@ -157,7 +157,7 @@ describe('listBaselines', () => {
       elements: [{ selector: '.box' }, { selector: '.title' }],
     }));
 
-    const result = listBaselines(tmpDir);
+    const result = await storage.listSnapshots(tmpDir, 'reference');
     assert.equal(result.length, 1);
     assert.equal(result[0].scenario, 'homepage');
     assert.equal(result[0].viewport, 'desktop');
@@ -166,24 +166,23 @@ describe('listBaselines', () => {
     assert.equal(result[0].url, 'http://example.com');
   });
 
-  it('handles multi-segment scenario names (underscores in label)', () => {
+  it('handles multi-segment scenario names (underscores in label)', async () => {
     const refDir = path.join(tmpDir, '.eyeless', 'snapshots', 'reference');
     fs.mkdirSync(refDir, { recursive: true });
 
-    // Filename: panel-open_desktop.json → scenario "panel-open", viewport "desktop"
     fs.writeFileSync(path.join(refDir, 'panel-open_desktop.json'), JSON.stringify({
       url: 'http://example.com',
       timestamp: '2026-01-02T00:00:00Z',
       elements: [],
     }));
 
-    const result = listBaselines(tmpDir);
+    const result = await storage.listSnapshots(tmpDir, 'reference');
     assert.equal(result.length, 1);
     assert.equal(result[0].scenario, 'panel-open');
     assert.equal(result[0].viewport, 'desktop');
   });
 
-  it('skips malformed JSON files gracefully', () => {
+  it('skips malformed JSON files gracefully', async () => {
     const refDir = path.join(tmpDir, '.eyeless', 'snapshots', 'reference');
     fs.mkdirSync(refDir, { recursive: true });
 
@@ -194,12 +193,12 @@ describe('listBaselines', () => {
     }));
     fs.writeFileSync(path.join(refDir, 'broken_desktop.json'), 'not valid json{{{');
 
-    const result = listBaselines(tmpDir);
+    const result = await storage.listSnapshots(tmpDir, 'reference');
     assert.equal(result.length, 1);
     assert.equal(result[0].scenario, 'valid');
   });
 
-  it('skips non-JSON files', () => {
+  it('skips non-JSON files', async () => {
     const refDir = path.join(tmpDir, '.eyeless', 'snapshots', 'reference');
     fs.mkdirSync(refDir, { recursive: true });
 
@@ -210,18 +209,17 @@ describe('listBaselines', () => {
     }));
     fs.writeFileSync(path.join(refDir, 'homepage_desktop.png'), 'binary data');
 
-    const result = listBaselines(tmpDir);
+    const result = await storage.listSnapshots(tmpDir, 'reference');
     assert.equal(result.length, 1);
   });
 
-  it('defaults missing fields to safe values', () => {
+  it('defaults missing fields to safe values', async () => {
     const refDir = path.join(tmpDir, '.eyeless', 'snapshots', 'reference');
     fs.mkdirSync(refDir, { recursive: true });
 
-    // Snapshot with no url, no timestamp, no elements array
     fs.writeFileSync(path.join(refDir, 'minimal_desktop.json'), JSON.stringify({}));
 
-    const result = listBaselines(tmpDir);
+    const result = await storage.listSnapshots(tmpDir, 'reference');
     assert.equal(result.length, 1);
     assert.equal(result[0].elementCount, 0);
     assert.equal(result[0].timestamp, '');

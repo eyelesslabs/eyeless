@@ -1,9 +1,9 @@
-import * as path from 'path';
-import * as fs from 'fs';
-import { loadConfig, ensureDirectories, getSnapshotsDir, getBaselinesDir, getEyelessDir } from './config';
+import { getSnapshotsDir, loadConfig, saveVersion } from './config';
 import { runReference, runTest } from './backstop';
-import { compareSnapshots, loadSnapshot, getSnapshotPath } from './attributor/compare';
-import { CheckResult, CaptureResult, EyelessConfig, ScenarioConfig, Viewport, Interaction, WaitStrategy } from './types';
+import { compareSnapshots, getSnapshotPath } from './attributor/compare';
+import { CheckResult, CaptureResult, EyelessConfig, ScenarioConfig, Interaction, WaitStrategy } from './types';
+import { Storage } from './storage/types';
+import { getDefaultStorage } from './storage';
 
 export interface EngineOptions {
   url?: string;
@@ -11,23 +11,18 @@ export interface EngineOptions {
   project?: string;
   interactions?: Interaction[];
   waitFor?: WaitStrategy[];
+  storage?: Storage;
 }
 
 export type CaptureOptions = EngineOptions;
 export type CheckOptions = EngineOptions;
 
-export function findScreenshot(dir: string, label: string, viewport: string): string | undefined {
-  if (!fs.existsSync(dir)) return undefined;
-  const files = fs.readdirSync(dir);
-  // BackstopJS naming: {id}_{label}_{index}_{selector}_{selectorIndex}_{viewport}.png
+export async function findScreenshot(storage: Storage, projectPath: string, directory: string, label: string, viewport: string): Promise<string | undefined> {
+  const files = await storage.listBinaries(projectPath, directory);
   const match = files.find(f =>
     f.endsWith('.png') && f.includes(`_${label}_`) && f.includes(`_${viewport}.png`)
   );
-  return match ? path.join(dir, match) : undefined;
-}
-
-function screenshotRelativePath(eyelessDir: string, absolutePath: string): string {
-  return path.relative(eyelessDir, absolutePath);
+  return match || undefined;
 }
 
 export function resolveScenarios(opts: EngineOptions, config: EyelessConfig): ScenarioConfig[] {
@@ -53,23 +48,36 @@ export function resolveScenarios(opts: EngineOptions, config: EyelessConfig): Sc
 
 export async function capture(opts: CaptureOptions): Promise<CaptureResult[]> {
   const projectPath = opts.project || process.cwd();
-  const config = loadConfig(projectPath);
-  ensureDirectories(projectPath);
+  const storage = opts.storage || getDefaultStorage();
+
+  const config = await loadConfig(storage, projectPath);
+
+  await storage.ensureDirectories(projectPath);
 
   const scenarios = resolveScenarios(opts, config);
+
+  // Save current baselines as versions before overwriting
+  for (const scenario of scenarios) {
+    for (const vp of config.viewports) {
+      await saveVersion(storage, projectPath, scenario.label, vp.label, config.maxVersions);
+    }
+  }
+
   const isSingleLabel = scenarios.length === 1 && (config.scenarios.length > 1 || scenarios[0].label !== 'default');
-  const bitmapsDir = path.join(getBaselinesDir(projectPath), 'bitmaps_reference');
 
   // BackstopJS wipes bitmaps_reference on every reference run.
   // When capturing a single label, back up other scenarios' bitmaps
   // so they survive the wipe.
   let backedUpFiles: { name: string; data: Buffer }[] = [];
-  if (isSingleLabel && fs.existsSync(bitmapsDir)) {
+  if (isSingleLabel) {
     const label = scenarios[0].label;
-    const existing = fs.readdirSync(bitmapsDir).filter(f => f.endsWith('.png'));
+    const existing = await storage.listBinaries(projectPath, 'baselines/bitmaps_reference');
     for (const file of existing) {
-      if (!file.includes(`_${label}_`)) {
-        backedUpFiles.push({ name: file, data: fs.readFileSync(path.join(bitmapsDir, file)) });
+      if (file.endsWith('.png') && !file.includes(`_${label}_`)) {
+        const data = await storage.getBinary(projectPath, `baselines/bitmaps_reference/${file}`);
+        if (data) {
+          backedUpFiles.push({ name: file, data });
+        }
       }
     }
   }
@@ -77,14 +85,10 @@ export async function capture(opts: CaptureOptions): Promise<CaptureResult[]> {
   try {
     await runReference(config, projectPath, scenarios);
   } finally {
-    // Restore backed-up bitmaps even if runReference throws,
-    // since BackstopJS wipes bitmaps_reference before running scenarios.
+    // Restore backed-up bitmaps even if runReference throws
     if (backedUpFiles.length > 0) {
-      if (!fs.existsSync(bitmapsDir)) {
-        fs.mkdirSync(bitmapsDir, { recursive: true });
-      }
       for (const { name, data } of backedUpFiles) {
-        fs.writeFileSync(path.join(bitmapsDir, name), data);
+        await storage.putBinary(projectPath, `baselines/bitmaps_reference/${name}`, data);
       }
     }
   }
@@ -95,7 +99,7 @@ export async function capture(opts: CaptureOptions): Promise<CaptureResult[]> {
   for (const scenario of scenarios) {
     for (const vp of config.viewports) {
       const snapshotPath = getSnapshotPath(snapshotsDir, 'reference', scenario.label, vp.label);
-      const snapshot = loadSnapshot(snapshotPath);
+      const snapshot = await storage.getSnapshot(projectPath, 'reference', scenario.label, vp.label);
       const elementCount = snapshot?.elements.length || 0;
 
       results.push({
@@ -114,30 +118,30 @@ export async function capture(opts: CaptureOptions): Promise<CaptureResult[]> {
 
 export async function check(opts: CheckOptions): Promise<CheckResult[]> {
   const projectPath = opts.project || process.cwd();
-  const config = loadConfig(projectPath);
-  ensureDirectories(projectPath);
+  const storage = opts.storage || getDefaultStorage();
+
+  const config = await loadConfig(storage, projectPath);
+
+  await storage.ensureDirectories(projectPath);
 
   const scenarios = resolveScenarios(opts, config);
 
   const backstopResult = await runTest(config, projectPath, scenarios);
-  const snapshotsDir = getSnapshotsDir(projectPath);
-  const eyelessDir = getEyelessDir(projectPath);
-  const baselinesDir = getBaselinesDir(projectPath);
   const results: CheckResult[] = [];
 
   for (const scenario of scenarios) {
     const label = scenario.label;
 
     for (const vp of config.viewports) {
-      const refSnapshot = loadSnapshot(getSnapshotPath(snapshotsDir, 'reference', label, vp.label));
-      const testSnapshot = loadSnapshot(getSnapshotPath(snapshotsDir, 'test', label, vp.label));
+      const refSnapshot = await storage.getSnapshot(projectPath, 'reference', label, vp.label);
+      const testSnapshot = await storage.getSnapshot(projectPath, 'test', label, vp.label);
 
-      // Find screenshot image paths
-      const refImagePath = findScreenshot(path.join(baselinesDir, 'bitmaps_reference'), label, vp.label);
-      const testImagePath = findScreenshot(path.join(eyelessDir, 'bitmaps_test', 'eyeless'), label, vp.label);
+      // Find screenshot image paths (relative to .eyeless/)
+      const refImageFile = await findScreenshot(storage, projectPath, 'baselines/bitmaps_reference', label, vp.label);
+      const testImageFile = await findScreenshot(storage, projectPath, 'bitmaps_test/eyeless', label, vp.label);
 
-      const referenceImage = refImagePath ? screenshotRelativePath(eyelessDir, refImagePath) : undefined;
-      const testImage = testImagePath ? screenshotRelativePath(eyelessDir, testImagePath) : undefined;
+      const referenceImage = refImageFile ? `baselines/bitmaps_reference/${refImageFile}` : undefined;
+      const testImage = testImageFile ? `bitmaps_test/eyeless/${testImageFile}` : undefined;
 
       if (!refSnapshot) {
         results.push({

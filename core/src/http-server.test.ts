@@ -266,6 +266,38 @@ describe('HTTP server scenario validation', () => {
     assert.equal(res.status, 400);
   });
 
+  it('rejects config with invalid maxVersions', async () => {
+    const res = await request('POST', '/config', JSON.stringify({
+      project: tmpDir,
+      config: {
+        url: 'http://test.com',
+        threshold: 0.1,
+        viewports: [],
+        scenarios: [],
+        ignore: [],
+        maxVersions: -5,
+      },
+    }));
+    assert.equal(res.status, 400);
+    const body = JSON.parse(res.body);
+    assert.ok(body.error.includes('maxVersions'));
+  });
+
+  it('accepts config with valid maxVersions', async () => {
+    const res = await request('POST', '/config', JSON.stringify({
+      project: tmpDir,
+      config: {
+        url: 'http://test.com',
+        threshold: 0.1,
+        viewports: [],
+        scenarios: [],
+        ignore: [],
+        maxVersions: 10,
+      },
+    }));
+    assert.equal(res.status, 200);
+  });
+
   it('accepts config with valid scenarios', async () => {
     const res = await request('POST', '/config', JSON.stringify({
       project: tmpDir,
@@ -281,6 +313,183 @@ describe('HTTP server scenario validation', () => {
       },
     }));
     assert.equal(res.status, 200);
+  });
+});
+
+describe('HTTP server history detail', () => {
+  it('GET /history/:id returns full detail for valid index', async () => {
+    const eyelessDir = path.join(tmpDir, '.eyeless');
+    fs.mkdirSync(eyelessDir, { recursive: true });
+    const history = [
+      {
+        timestamp: '2026-04-05T00:00:00.000Z',
+        results: [
+          {
+            status: 'drift',
+            matchPercentage: 85.0,
+            scenario: 'modal',
+            viewport: 'desktop',
+            drifts: [{ selector: '.x', tagName: 'div', property: 'color', baseline: 'red', current: 'blue' }],
+            summary: 'drift',
+          },
+        ],
+      },
+    ];
+    fs.writeFileSync(path.join(eyelessDir, 'history.json'), JSON.stringify(history));
+
+    const res = await request('GET', `/history/0?project=${encodeURIComponent(tmpDir)}`);
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.timestamp, '2026-04-05T00:00:00.000Z');
+    assert.equal(body.results.length, 1);
+    assert.equal(body.results[0].drifts.length, 1);
+    assert.equal(body.results[0].drifts[0].property, 'color');
+    assert.equal(body.results[0].drifts[0].baseline, 'red');
+    assert.equal(body.results[0].drifts[0].current, 'blue');
+  });
+
+  it('GET /history/:id returns 404 for invalid index', async () => {
+    const eyelessDir = path.join(tmpDir, '.eyeless');
+    fs.mkdirSync(eyelessDir, { recursive: true });
+    fs.writeFileSync(path.join(eyelessDir, 'history.json'), '[]');
+
+    const res = await request('GET', `/history/99?project=${encodeURIComponent(tmpDir)}`);
+    assert.equal(res.status, 404);
+  });
+
+  it('GET /history/:id returns 404 for out-of-range index', async () => {
+    const eyelessDir = path.join(tmpDir, '.eyeless');
+    fs.mkdirSync(eyelessDir, { recursive: true });
+    const history = [{ timestamp: '2026-04-05T00:00:00.000Z', results: [] }];
+    fs.writeFileSync(path.join(eyelessDir, 'history.json'), JSON.stringify(history));
+
+    const res = await request('GET', `/history/5?project=${encodeURIComponent(tmpDir)}`);
+    assert.equal(res.status, 404);
+  });
+
+  it('GET /history/:id validates project path', async () => {
+    const res = await request('GET', '/history/0?project=relative/path');
+    assert.equal(res.status, 400);
+  });
+});
+
+describe('HTTP server versions', () => {
+  it('GET /baselines/:scenario/versions returns versions for valid scenario', async () => {
+    // Create a snapshot and version it
+    const refDir = path.join(tmpDir, '.eyeless', 'snapshots', 'reference');
+    fs.mkdirSync(refDir, { recursive: true });
+    fs.writeFileSync(path.join(refDir, 'homepage_desktop.json'), JSON.stringify({
+      url: 'http://example.com',
+      timestamp: '2026-01-01T00:00:00Z',
+      elements: [],
+    }));
+
+    const versionDir = path.join(tmpDir, '.eyeless', 'versions', 'homepage_desktop');
+    fs.mkdirSync(versionDir, { recursive: true });
+    fs.writeFileSync(path.join(versionDir, '2026-01-01T00-00-00-000Z.json'), JSON.stringify({
+      url: 'http://example.com',
+      timestamp: '2026-01-01T00:00:00Z',
+      elements: [],
+    }));
+
+    const res = await request('GET', `/baselines/homepage/versions?project=${encodeURIComponent(tmpDir)}&viewport=desktop`);
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body.versions));
+    assert.equal(body.versions.length, 1);
+  });
+
+  it('GET /baselines/:scenario/versions returns empty for nonexistent scenario', async () => {
+    const res = await request('GET', `/baselines/nonexistent/versions?project=${encodeURIComponent(tmpDir)}&viewport=desktop`);
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.deepEqual(body.versions, []);
+  });
+
+  it('GET /baselines/:scenario/versions validates project path', async () => {
+    const res = await request('GET', '/baselines/homepage/versions?project=relative/path');
+    assert.equal(res.status, 400);
+  });
+
+  it('POST /baselines/:scenario/restore returns 404 for nonexistent version', async () => {
+    const res = await request('POST', '/baselines/homepage/restore', JSON.stringify({
+      project: tmpDir,
+      viewport: 'desktop',
+      version: 'nonexistent',
+    }));
+    assert.equal(res.status, 404);
+  });
+
+  it('POST /baselines/:scenario/restore validates project path', async () => {
+    const res = await request('POST', '/baselines/homepage/restore', JSON.stringify({
+      project: 'relative/path',
+      version: 'whatever',
+    }));
+    assert.equal(res.status, 400);
+  });
+
+  it('POST /baselines/:scenario/restore requires version field', async () => {
+    const res = await request('POST', '/baselines/homepage/restore', JSON.stringify({
+      project: tmpDir,
+    }));
+    assert.equal(res.status, 400);
+    const body = JSON.parse(res.body);
+    assert.ok(body.error.includes('version'));
+  });
+});
+
+describe('HTTP server export', () => {
+  it('POST /export returns HTML content-type', async () => {
+    const eyelessDir = path.join(tmpDir, '.eyeless');
+    fs.mkdirSync(eyelessDir, { recursive: true });
+    const history = [{
+      timestamp: '2026-04-05T00:00:00.000Z',
+      results: [{ status: 'pass', matchPercentage: 100, scenario: 'default', viewport: 'desktop', drifts: [], summary: 'ok' }],
+    }];
+    fs.writeFileSync(path.join(eyelessDir, 'history.json'), JSON.stringify(history));
+
+    const res = await request('POST', '/export', JSON.stringify({ project: tmpDir }));
+    assert.equal(res.status, 200);
+    assert.ok(res.body.includes('<!DOCTYPE html>'));
+  });
+
+  it('POST /export returns 404 when no history exists', async () => {
+    const res = await request('POST', '/export', JSON.stringify({ project: tmpDir }));
+    assert.equal(res.status, 404);
+    const body = JSON.parse(res.body);
+    assert.ok(body.error.includes('No check history'));
+  });
+
+  it('POST /export with specific checkIndex works', async () => {
+    const eyelessDir = path.join(tmpDir, '.eyeless');
+    fs.mkdirSync(eyelessDir, { recursive: true });
+    const history = [
+      { timestamp: '2026-01-01T00:00:00.000Z', results: [{ status: 'pass', matchPercentage: 100, scenario: 'first', viewport: 'desktop', drifts: [], summary: 'ok' }] },
+      { timestamp: '2026-02-01T00:00:00.000Z', results: [{ status: 'drift', matchPercentage: 90, scenario: 'second', viewport: 'desktop', drifts: [], summary: 'drift' }] },
+    ];
+    fs.writeFileSync(path.join(eyelessDir, 'history.json'), JSON.stringify(history));
+
+    const res = await request('POST', '/export', JSON.stringify({ project: tmpDir, checkIndex: 0 }));
+    assert.equal(res.status, 200);
+    assert.ok(res.body.includes('first'));
+    assert.ok(res.body.includes('2026-01-01'));
+  });
+
+  it('POST /export returns 404 for invalid checkIndex', async () => {
+    const eyelessDir = path.join(tmpDir, '.eyeless');
+    fs.mkdirSync(eyelessDir, { recursive: true });
+    const history = [
+      { timestamp: '2026-01-01T00:00:00.000Z', results: [] },
+    ];
+    fs.writeFileSync(path.join(eyelessDir, 'history.json'), JSON.stringify(history));
+
+    const res = await request('POST', '/export', JSON.stringify({ project: tmpDir, checkIndex: 99 }));
+    assert.equal(res.status, 404);
+  });
+
+  it('POST /export validates project path', async () => {
+    const res = await request('POST', '/export', JSON.stringify({ project: 'relative/path' }));
+    assert.equal(res.status, 400);
   });
 });
 

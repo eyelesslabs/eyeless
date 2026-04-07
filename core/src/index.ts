@@ -1,7 +1,11 @@
 export { createServer, startServer } from './mcp/server';
-export { loadConfig, saveConfig, ensureDirectories } from './config';
+export { loadConfig, saveVersion, restoreVersion } from './config';
 export { runReference, runTest } from './backstop';
 export { capture, check } from './engine';
-export { compareSnapshots, loadSnapshot } from './attributor/compare';
+export { compareSnapshots } from './attributor/compare';
 export { formatCheckResult, formatCaptureResult, formatCheckResultCompact } from './output';
+export { generateExportHtml } from './export';
+export { Storage, SnapshotEntry } from './storage/types';
+export { FileStorage } from './storage/file-storage';
+export { createStorage, getDefaultStorage, setDefaultStorage } from './storage';
 export * from './types';
