@@ -9,7 +9,7 @@ import { Storage } from './storage/types';
 import { getDefaultStorage } from './storage';
 
 // --- Security constants ---
-const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MB
+const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB (supports base64 image imports)
 const MAX_HISTORY_ENTRIES = 100;
 const MAX_RUNTIME_INTERACTIONS = 20;
 const MAX_RUNTIME_WAIT_STRATEGIES = 20;
@@ -460,7 +460,7 @@ export function startHttpServer(port: number = 0, storage?: Storage): Promise<Ht
         // --- POST /import ---
         else if (req.method === 'POST' && pathname === '/import') {
           const body = await readBody(req);
-          let parsed: { project?: string; scenario?: string; viewport?: string };
+          let parsed: { project?: string; scenario?: string; viewport?: string; image?: string };
           try {
             parsed = JSON.parse(body);
           } catch {
@@ -482,6 +482,14 @@ export function startHttpServer(port: number = 0, storage?: Storage): Promise<Ht
             elements: [],
           };
           await s.putSnapshot(projectPath, 'reference', parsed.scenario, viewport, snapshot as any);
+
+          // Store the image if provided (base64-encoded PNG)
+          if (parsed.image) {
+            const imageBuffer = Buffer.from(parsed.image, 'base64');
+            const imagePath = `baselines/bitmaps_reference/eyeless_${parsed.scenario}_0_document_0_${viewport}.png`;
+            await s.putBinary(projectPath, imagePath, imageBuffer);
+          }
+
           respond(res, { status: 'imported', scenario: parsed.scenario, viewport });
         }
 
