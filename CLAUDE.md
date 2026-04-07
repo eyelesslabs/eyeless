@@ -130,6 +130,18 @@ The HTTP server is localhost-only (`127.0.0.1`). Key measures:
 - **No CORS headers** — only local clients talk to the HTTP server
 - **Error sanitization** — 500 responses never leak internal paths
 
+## Scope
+
+This is a standalone local tool. It captures screenshots, compares them, and serves results via HTTP and MCP. That's it.
+
+**Out of scope for this repo:**
+- Sync, cloud storage, push/pull
+- Authentication, tokens, OAuth
+- User accounts, teams, billing
+- Plan gating or pricing logic
+
+**Commit messages:** describe what the code does, not business context. "Add history endpoint" not "Add paid history feature".
+
 ## Conventions
 
 - **Node.js:** TypeScript (strict), CommonJS. Zero added runtime deps beyond BackstopJS, Playwright, MCP SDK. Tests use `node:test`.
