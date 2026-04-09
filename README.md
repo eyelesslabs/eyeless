@@ -39,6 +39,40 @@ eyeless capture --label homepage
 eyeless check --label homepage
 ```
 
+## CI / GitHub Actions
+
+Use `eyeless check --ci` in any CI pipeline to fail a pull request on visual drift. The flag switches output to structured JSON (written to stdout) and sets the exit code: `0` for pass, `1` for drift, `2` for error.
+
+A complete, copy-paste workflow is in [`.github/examples/eyeless-check.yml`](.github/examples/eyeless-check.yml). To use it, copy the file to `.github/workflows/` in your repo.
+
+Minimal example:
+
+```yaml
+name: Eyeless visual check
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  visual-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - run: npm install -g eyeless
+      - run: npx playwright install chromium --with-deps
+      - run: npm run dev &
+      - run: npx wait-on http://localhost:3000 --timeout 30000
+      - run: eyeless check --ci --label homepage
+```
+
+Pass `--threshold <n>` to allow up to `n`% difference before failing. Pass `--label` to target a specific scenario.
+
 ## MCP Tools
 
 | Tool | What it does |

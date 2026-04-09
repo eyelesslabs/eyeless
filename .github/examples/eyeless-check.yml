@@ -1,0 +1,70 @@
+# Eyeless visual check — CI example
+#
+# Drop this into .github/workflows/ in any repo that uses Eyeless.
+# It captures a baseline on main and runs a visual diff on every pull request.
+#
+# Prerequisites:
+#   1. Run `eyeless init --url <your-dev-url>` and commit the .eyeless/ config.
+#   2. Commit an initial baseline (`eyeless capture --label <label>`) so the
+#      workflow has something to compare against on the first PR.
+#
+# Customisation:
+#   - Change `--label` to match your scenario names.
+#   - Add `--threshold <n>` to allow up to n% pixel difference before failing.
+#     Example: `--threshold 1` allows 1% mismatch.
+#   - Add `--url <url>` if your dev server URL differs from what's in config.
+#   - Repeat the "Run eyeless check" step for multiple scenarios.
+#
+# Exit codes returned by `eyeless check --ci`:
+#   0  — all scenarios passed
+#   1  — visual drift detected
+#   2  — unexpected error (missing baseline, browser crash, etc.)
+
+name: Eyeless visual check
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  visual-check:
+    name: Visual regression check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Eyeless
+        run: npm install -g eyeless
+
+      - name: Install Playwright browser
+        run: npx playwright install chromium --with-deps
+
+      - name: Start dev server
+        run: npm run dev &
+        # Replace with however your project starts its local server.
+        # Make sure it listens on the same URL that's in .eyeless/config.json.
+
+      - name: Wait for dev server
+        run: npx wait-on http://localhost:3000 --timeout 30000
+        # Adjust the URL and timeout to match your setup.
+        # Install wait-on if needed: npm install --save-dev wait-on
+
+      - name: Run eyeless check
+        run: eyeless check --ci --label homepage
+        # On drift:  exits 1  — the step fails and the PR is blocked.
+        # On pass:   exits 0  — the step passes.
+        # On error:  exits 2  — missing baseline or browser crash.
+        #
+        # JSON output is written to stdout. Pipe to jq for readable diffs:
+        #   eyeless check --ci --label homepage | jq '.results'
