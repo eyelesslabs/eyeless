@@ -171,6 +171,27 @@ These apply to all agents and contributors working on this project.
 - **No system installs without asking** — Never run `brew install`, `npm install -g`, or modify system-level config without explicit approval.
 - **Surface errors to users** — Don't swallow errors with empty catch blocks in user-facing code. Show the user what went wrong.
 
+## Releasing
+
+The version lives in two `package.json` files. `cli.ts` and `server.ts` read it at runtime — don't hardcode it there.
+
+```bash
+# 1. Bump version in both package.json files
+#    Root: ./package.json (npm registry metadata)
+#    Core: ./core/package.json (runtime, read by cli.ts and server.ts)
+
+# 2. Regenerate both lockfiles
+cd core && npm install --package-lock-only && cd ..
+npm install --package-lock-only
+
+# 3. Build and test
+cd core && npm run build && npm test
+
+# 4. Commit, push, publish
+git add -A && git commit -m "Bump to x.y.z" && git push
+cd core && npm publish
+```
+
 ## Common Tasks
 
 **Add a new HTTP endpoint:**
