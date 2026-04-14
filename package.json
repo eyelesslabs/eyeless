@@ -1,6 +1,6 @@
 {
   "name": "eyeless",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Visual feedback for AI coding agents — structured text, zero pixels",
   "main": "core/dist/index.js",
   "types": "core/dist/index.d.ts",

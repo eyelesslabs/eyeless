@@ -11,7 +11,7 @@ import { getDefaultStorage } from './storage';
 import { runSync, SyncAuthError } from './sync';
 import * as fs from 'fs';
 
-const VERSION = '0.1.0';
+const VERSION = '0.4.0';
 const command = process.argv[2];
 const args = process.argv.slice(3);
 
