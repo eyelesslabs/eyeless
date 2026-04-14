@@ -8,6 +8,7 @@ import { formatCheckResultCompact } from './output';
 import { generateExportHtml } from './export';
 import { EyelessConfig } from './types';
 import { getDefaultStorage } from './storage';
+import { runSync, SyncAuthError } from './sync';
 import * as fs from 'fs';
 
 const VERSION = '0.1.0';
@@ -35,6 +36,7 @@ function printHelp() {
   console.log('  serve              Start MCP server (stdio transport)');
   console.log('  check              Check current state against baseline');
   console.log('  capture            Capture a visual baseline');
+  console.log('  sync               Upload latest check result to Eyeless cloud');
   console.log('  history            Show check history');
   console.log('  versions           Show baseline version history');
   console.log('  export             Export a check report as HTML');
@@ -301,6 +303,33 @@ async function main() {
       const outputPath = flags.output || 'eyeless-report.html';
       fs.writeFileSync(outputPath, html);
       console.log(`Report written to ${outputPath}`);
+      break;
+    }
+
+    case 'sync': {
+      const token = process.env.EYELESS_TOKEN;
+      if (!token) {
+        console.error('EYELESS_TOKEN environment variable is required.');
+        console.error('Set it to your Eyeless API token before running this command.');
+        process.exit(1);
+      }
+
+      const apiUrl = process.env.EYELESS_API_URL || 'https://eyeless.dev';
+
+      try {
+        const result = await runSync({ token, apiUrl, projectPath });
+        if (result.reportUrl) {
+          console.log(`Report: ${result.reportUrl}`);
+        } else {
+          console.log('Sync complete.');
+        }
+      } catch (err: any) {
+        if (err instanceof SyncAuthError) {
+          console.error(err.message);
+          process.exit(1);
+        }
+        throw err;
+      }
       break;
     }
 
