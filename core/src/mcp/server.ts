@@ -2,13 +2,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { capture, check } from '../engine';
-import { formatCheckResult, formatCaptureResult, formatBaselinesList, formatSnapshotInspection } from '../output';
+import { formatCheckResult, formatCaptureResult, formatBaselinesList, formatSnapshotInspection, formatStatus, formatCaptureHint, formatCheckHint } from '../output';
 import { loadConfig, restoreVersion } from '../config';
 import { resolveProjectPath } from '../validation';
 import { generateExportHtml } from '../export';
-import { Storage } from '../storage/types';
+import { Storage, SnapshotEntry } from '../storage/types';
 import { getDefaultStorage } from '../storage';
-import { SnapshotEntry } from '../storage/types';
 import { BaselineEntry } from '../output';
 
 /**
@@ -70,7 +69,13 @@ EXAMPLE — capture a modal state:
   interactions: [{ type: "click", selector: "#settings-btn" }]
   waitFor: [{ type: "selector", selector: ".modal.settings" }]
 
-Use different labels to capture multiple states of the same URL (e.g. "homepage", "modal-open", "settings-panel").`,
+Use different labels to capture multiple states of the same URL (e.g. "homepage", "modal-open", "settings-panel").
+
+WORKFLOW:
+  - Existing projects: capture key pages before making changes so you have baselines to check against.
+  - Building from a prototype: capture the prototype pages first as your visual reference. As you build the real implementation, run eyeless_check to verify it matches the prototype.
+  - New projects: capture each page as you finish building it, before moving to the next.
+  - After any intentional visual change, re-capture to update the baseline.`,
     {
       url: z.string().optional().describe('URL to capture. Defaults to config url.'),
       label: z.string().optional().describe('Name for this baseline scenario (e.g. "homepage", "modal-open", "settings-panel"). Defaults to "default". Use different labels to capture multiple states of the same URL.'),
@@ -92,9 +97,18 @@ Use different labels to capture multiple states of the same URL (e.g. "homepage"
       try {
         const projectPath = resolveProjectPath(project);
         const results = await capture({ url, label, project: projectPath, interactions, waitFor, storage: s });
-        const text = results.map(formatCaptureResult).join('\n---\n');
+        const parts = results.map(formatCaptureResult);
+
+        const allSnapshots = await s.listSnapshots(projectPath, 'reference');
+        const justCaptured = new Set(results.map(r => r.scenario));
+        const otherBaselineCount = new Set(
+          allSnapshots.filter(snap => !justCaptured.has(snap.scenario)).map(snap => snap.scenario)
+        ).size;
+        parts.push(formatCaptureHint({ otherBaselineCount }));
+
+        const text = parts.join('\n---\n');
         return { content: [{ type: 'text', text }] };
-      } catch (err: any) {
+      } catch (err: unknown) {
         return {
           content: [{ type: 'text', text: `Capture failed: ${sanitizeError(err)}` }],
           isError: true,
@@ -105,9 +119,14 @@ Use different labels to capture multiple states of the same URL (e.g. "homepage"
 
   server.tool(
     'eyeless_check',
-    `Check the current page state against the baseline. Returns structured diffs with CSS selectors and computed style values — no screenshots needed.
+    `Check the current page state against baselines. Returns structured diffs with CSS selectors and computed style values — no screenshots needed.
 
-Must use the same label, interactions, and waitFor that were used during capture so the check reaches the same page state. For example, if you captured "modal-open" with a click interaction, pass the same interaction when checking.
+Must use the same label, interactions, and waitFor used during capture to reach the same page state.
+
+REGRESSION WORKFLOW:
+  - After editing shared CSS, layout files, or components used across pages → run WITHOUT a label to check ALL baselines.
+  - After a change scoped to a single page → run WITH the matching label.
+  - When in doubt, omit the label. Checking all baselines is fast; missing a regression is costly.
 
 See eyeless_capture for full documentation on interactions and waitFor options.`,
     {
@@ -131,9 +150,19 @@ See eyeless_capture for full documentation on interactions and waitFor options.`
       try {
         const projectPath = resolveProjectPath(project);
         const results = await check({ url, label, project: projectPath, interactions, waitFor, storage: s });
-        const text = results.map(formatCheckResult).join('\n---\n');
+        const parts = results.map(formatCheckResult);
+
+        if (label) {
+          const allSnapshots = await s.listSnapshots(projectPath, 'reference');
+          const allBaselines = toBaselineEntries(allSnapshots);
+          const checkedScenarios = results.map(r => r.scenario);
+          const hint = formatCheckHint({ checkedScenarios, allBaselines });
+          if (hint) parts.push(hint);
+        }
+
+        const text = parts.join('\n---\n');
         return { content: [{ type: 'text', text }] };
-      } catch (err: any) {
+      } catch (err: unknown) {
         return {
           content: [{ type: 'text', text: `Check failed: ${sanitizeError(err)}` }],
           isError: true,
@@ -155,7 +184,7 @@ See eyeless_capture for full documentation on interactions and waitFor options.`
         const baselines = toBaselineEntries(snapshots);
         const text = formatBaselinesList(baselines);
         return { content: [{ type: 'text', text }] };
-      } catch (err: any) {
+      } catch (err: unknown) {
         return {
           content: [{ type: 'text', text: `Failed to list baselines: ${sanitizeError(err)}` }],
           isError: true,
@@ -189,7 +218,7 @@ See eyeless_capture for full documentation on interactions and waitFor options.`
 
         const text = formatSnapshotInspection(snapshot);
         return { content: [{ type: 'text', text }] };
-      } catch (err: any) {
+      } catch (err: unknown) {
         return {
           content: [{ type: 'text', text: `Inspect failed: ${sanitizeError(err)}` }],
           isError: true,
@@ -234,7 +263,7 @@ See eyeless_capture for full documentation on interactions and waitFor options.`
           }
         }
         return { content: [{ type: 'text', text: lines.join('\n') }] };
-      } catch (err: any) {
+      } catch (err: unknown) {
         return {
           content: [{ type: 'text', text: `History failed: ${sanitizeError(err)}` }],
           isError: true,
@@ -278,7 +307,7 @@ See eyeless_capture for full documentation on interactions and waitFor options.`
           lines.push(`  ${i}: ${v.timestamp}${hasBitmap}`);
         }
         return { content: [{ type: 'text', text: lines.join('\n') }] };
-      } catch (err: any) {
+      } catch (err: unknown) {
         return {
           content: [{ type: 'text', text: `Versions failed: ${sanitizeError(err)}` }],
           isError: true,
@@ -311,9 +340,34 @@ See eyeless_capture for full documentation on interactions and waitFor options.`
         const entry = history[idx];
         const html = await generateExportHtml(entry, projectPath, s);
         return { content: [{ type: 'text', text: html }] };
-      } catch (err: any) {
+      } catch (err: unknown) {
         return {
           content: [{ type: 'text', text: `Export failed: ${sanitizeError(err)}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.tool(
+    'eyeless_status',
+    'Get the visual coverage state of this project — baselines, last check results, stale baselines, and unchecked scenarios. Call this at the start of any task that touches frontend code to understand what pages have visual baselines and what needs checking.',
+    {
+      project: z.string().optional().describe('Path to the project directory. Defaults to cwd.'),
+    },
+    async ({ project }) => {
+      try {
+        const projectPath = resolveProjectPath(project);
+        const snapshots = await s.listSnapshots(projectPath, 'reference');
+        const baselines = toBaselineEntries(snapshots);
+        const history = await s.getHistory(projectPath);
+        const lastCheck = history.length > 0 ? history[history.length - 1] : null;
+
+        const text = formatStatus({ baselines, lastCheck, now: new Date() });
+        return { content: [{ type: 'text', text }] };
+      } catch (err: unknown) {
+        return {
+          content: [{ type: 'text', text: `Status failed: ${sanitizeError(err)}` }],
           isError: true,
         };
       }
