@@ -29,7 +29,7 @@ Add to your MCP config:
 }
 ```
 
-Your agent now has four tools: `eyeless_capture`, `eyeless_check`, `eyeless_baselines`, `eyeless_inspect`.
+Your agent now has tools for capturing baselines, checking for regressions, viewing history, and more. Run `eyeless_status` at the start of any task to see what visual baselines exist.
 
 ### CLI
 
@@ -77,10 +77,14 @@ Pass `--threshold <n>` to allow up to `n`% difference before failing. Pass `--la
 
 | Tool | What it does |
 |------|-------------|
+| `eyeless_status` | Get visual coverage state — baselines, last check results, stale/unchecked scenarios |
 | `eyeless_capture` | Capture a visual baseline — screenshots + computed styles for every element |
 | `eyeless_check` | Compare current state against baseline, returns structured drifts |
 | `eyeless_baselines` | List all baselines for a project |
 | `eyeless_inspect` | Inspect a baseline's captured elements and tracked properties |
+| `eyeless_history` | View check history — summary list or full detail for a specific entry |
+| `eyeless_versions` | List or restore previous baseline versions |
+| `eyeless_export` | Export a check result as a self-contained HTML report |
 
 ## Multi-State Capture
 
