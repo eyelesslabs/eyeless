@@ -6,7 +6,7 @@ Structured visual feedback for AI coding agents. Node.js core (BackstopJS + Play
 
 ```bash
 npm install && npm run build   # Build
-cd core && npm test            # Run tests (86 tests)
+cd core && npm test            # Run tests (236 tests)
 cd core && npm run dev         # Watch mode
 
 # CLI
@@ -30,7 +30,7 @@ eyeless/
 │       │   ├── styles.ts        # Tracked CSS + SVG properties
 │       │   └── on-ready-script.ts  # Playwright page script (shadow DOM, pseudo-elements, SVG, confidence scoring)
 │       ├── backstop/index.ts    # BackstopJS wrapper (interactions, animation disabling)
-│       ├── mcp/server.ts        # MCP tools (capture, check, baselines, inspect)
+│       ├── mcp/server.ts        # MCP tools (status, capture, check, baselines, inspect, history, versions, export)
 │       ├── output/index.ts      # Result formatters
 │       ├── cli.ts               # CLI (serve, init, capture, check, dashboard)
 │       ├── types.ts             # TypeScript interfaces
@@ -43,7 +43,7 @@ eyeless/
 
 1. HTTP server starts on a random localhost port, prints `PORT:{n}` to stdout
 2. Consumers connect to `http://127.0.0.1:{port}`
-3. MCP server (separate process via stdio) exposes 4 tools for AI agents
+3. MCP server (separate process via stdio) exposes 8 tools for AI agents
 
 ## Data Flow
 
@@ -64,10 +64,14 @@ Each project stores its data in `{project}/.eyeless/`:
 
 | Tool | Description |
 |------|-------------|
+| `eyeless_status` | Get visual coverage state — baselines, last check results, stale/unchecked scenarios. Call at the start of any frontend task |
 | `eyeless_capture` | Capture a visual baseline — supports interactions, JS execution, and wait strategies for multi-state capture |
-| `eyeless_check` | Check current state against baseline, returns structured drifts |
+| `eyeless_check` | Check current state against baseline, returns structured drifts with regression awareness hints |
 | `eyeless_baselines` | List all baselines for a project |
 | `eyeless_inspect` | Inspect a baseline's captured elements and computed styles |
+| `eyeless_history` | View check history — summary list or full detail for a specific entry |
+| `eyeless_versions` | List or restore previous baseline versions |
+| `eyeless_export` | Export a check result as a self-contained HTML report |
 
 ### Multi-State Capture
 
@@ -98,20 +102,30 @@ All bound to `127.0.0.1` only. All project paths validated (absolute, existing d
 | GET | `/config?project={path}` | Load project config |
 | POST | `/config` | Save config (validated schema) |
 | GET | `/baselines?project={path}` | List baselines |
+| GET | `/baselines/{scenario}/versions?project={path}` | List baseline versions |
 | POST | `/capture` | Capture baseline via BackstopJS |
 | POST | `/check` | Run check against baseline |
-| POST | `/approve` | Approve current as new baseline |
-| GET | `/screenshot/{path}?project={path}` | Serve screenshot images |
 | GET | `/history?project={path}` | Check result history |
+| GET | `/history/{id}?project={path}` | Get a specific history entry |
+| GET | `/screenshot/{path}?project={path}` | Serve screenshot images |
+| POST | `/import` | Import check results from CI/external sources |
 
 ## Testing
 
-**Node.js (86 tests):** `node:test` + `node:assert` — zero added dependencies.
+**Node.js (236 tests):** `node:test` + `node:assert` — zero added dependencies.
 - `compare.test.ts` — snapshot comparison algorithm
 - `config/index.test.ts` — config loading, saving, path utilities
-- `engine.test.ts` — screenshot file finder
-- `http-server.test.ts` — route tests + 11 security tests
+- `engine.test.ts` — scenario resolution, screenshot file finder
+- `http-server.test.ts` — route tests + security tests
 - `integration.test.ts` — end-to-end engine tests with real HTML + Playwright (multi-state capture, interactions, wait strategies)
+- `output/index.test.ts` — result formatters, status/capture/check hint logic
+- `mcp/server.test.ts` — MCP tool integration tests with FileStorage
+- `history.test.ts` — history append, pruning, retrieval
+- `versions.test.ts` — baseline versioning, restore, pruning
+- `export.test.ts` — HTML report generation
+- `sync.test.ts` — sync/upload to remote server, CI detection
+- `cli.test.ts` — CLI command parsing and output
+- `storage/file-storage.test.ts` — file-based storage adapter
 
 **CI:** GitHub Actions runs Node tests on push/PR to main.
 
@@ -135,7 +149,6 @@ The HTTP server is localhost-only (`127.0.0.1`). Key measures:
 This is a standalone local tool. It captures screenshots, compares them, and serves results via HTTP and MCP. That's it.
 
 **Out of scope for this repo:**
-- Sync, cloud storage, push/pull
 - Authentication, tokens, OAuth
 - User accounts, teams, billing
 - Plan gating or pricing logic
