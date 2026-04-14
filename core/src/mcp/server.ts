@@ -9,6 +9,7 @@ import { generateExportHtml } from '../export';
 import { Storage, SnapshotEntry } from '../storage/types';
 import { getDefaultStorage } from '../storage';
 import { BaselineEntry } from '../output';
+import { version } from '../../package.json';
 
 /**
  * Sanitize error messages for MCP responses.
@@ -42,7 +43,7 @@ export function createServer(storage?: Storage): McpServer {
 
   const server = new McpServer({
     name: 'eyeless',
-    version: '0.4.0',
+    version,
   });
 
   server.tool(

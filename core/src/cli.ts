@@ -10,8 +10,7 @@ import { EyelessConfig } from './types';
 import { getDefaultStorage } from './storage';
 import { runSync, SyncAuthError } from './sync';
 import * as fs from 'fs';
-
-const VERSION = '0.4.0';
+import { version as VERSION } from '../package.json';
 const command = process.argv[2];
 const args = process.argv.slice(3);
 
